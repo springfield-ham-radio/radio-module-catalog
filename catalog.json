@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "modules": [
+    {
+      "id": "baofeng",
+      "package": "@springfield/radio-module-baofeng",
+      "manufacturer": "Baofeng",
+      "description": "Baofeng UV-5R series (UV-5R, UV-5R Plus)",
+      "version": "3.0.0",
+      "supportedRadios": ["uv5r", "uv5r-plus"],
+      "minApiVersion": "17.3.0",
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.0.0/radio-module-baofeng-3.0.0.zip",
+      "integrity": "sha256:6cacd7eeaf8922e4245c63419e7213c2453beaa0787963f31a9e0054b4c89ac7"
+    }
+  ]
+}
