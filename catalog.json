@@ -11,17 +11,6 @@
       "minApiVersion": "17.3.0",
       "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.1.0/radio-module-baofeng-3.1.0.zip",
       "integrity": "sha256:a7d4006eea12b6a25b74dc47e26999ad6ca4ed41f5c91c4d36411028094acac1"
-    },
-    {
-      "id": "kenwood",
-      "package": "@springfield/radio-module-kenwood",
-      "manufacturer": "Kenwood",
-      "description": "Kenwood TH-F6 (live CAT) and TH-D74 (clone)",
-      "version": "1.0.0",
-      "supportedRadios": ["th-f6", "th-d74"],
-      "minApiVersion": "17.4.0",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v1.0.0/radio-module-kenwood-1.0.0.zip",
-      "integrity": "sha256:d9d9108d641ce3bbaba878853e4495dc82f180d39aa9b5cd3a9e67404795b348"
     }
   ]
 }
