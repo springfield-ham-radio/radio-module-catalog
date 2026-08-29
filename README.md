@@ -1,6 +1,6 @@
 # Radio Module Catalog
 
-Official index of installable radio modules for the Springfield Ham Radio desktop app.
+Official index of installable radio modules for the HamBench desktop app.
 
 The app fetches [`catalog.json`](./catalog.json) (served via GitHub Pages) and installs only modules listed here. Each entry points at a JSON-only zip attached to a GitHub Release of the corresponding `radio-module-*` repository.
 
