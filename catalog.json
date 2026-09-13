@@ -5,12 +5,47 @@
       "id": "baofeng",
       "package": "@springfield/radio-module-baofeng",
       "manufacturer": "Baofeng",
-      "description": "Baofeng UV-5R series (UV-5R, UV-5R Plus)",
-      "version": "3.1.0",
-      "supportedRadios": ["uv5r", "uv5r-plus"],
+      "description": "Baofeng UV-5R series (UV-5R and UV-5RE Plus share one config)",
+      "version": "3.4.1",
+      "radios": [
+        {
+          "modelId": "baofeng-uv5r",
+          "name": "Baofeng UV-5R",
+          "config": "configs/baofeng-uv5r.json"
+        }
+      ],
+      "supportedRadios": ["baofeng-uv5r"],
       "minApiVersion": "17.3.0",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.1.0/radio-module-baofeng-3.1.0.zip",
-      "integrity": "sha256:a7d4006eea12b6a25b74dc47e26999ad6ca4ed41f5c91c4d36411028094acac1"
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.4.1/radio-module-baofeng-3.4.1.zip",
+      "integrity": "sha256:a52680f58598f3c38689ff94695d4cf07b1e2efdaa769062e297daf74c5e02ef"
+    },
+    {
+      "id": "kenwood",
+      "package": "@springfield/radio-module-kenwood",
+      "manufacturer": "Kenwood",
+      "description": "Kenwood TH-F6, TH-D74, and TM-D710A",
+      "version": "1.8.0",
+      "radios": [
+        {
+          "modelId": "kenwood-th-d74",
+          "name": "Kenwood TH-D74",
+          "config": "configs/kenwood-th-d74.json"
+        },
+        {
+          "modelId": "kenwood-th-f6",
+          "name": "Kenwood TH-F6",
+          "config": "configs/kenwood-th-f6.json"
+        },
+        {
+          "modelId": "kenwood-tm-d710a",
+          "name": "Kenwood TM-D710A",
+          "config": "configs/kenwood-tm-d710a.json"
+        }
+      ],
+      "supportedRadios": ["kenwood-th-d74", "kenwood-th-f6", "kenwood-tm-d710a"],
+      "minApiVersion": "17.3.0",
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v1.8.0/radio-module-kenwood-1.8.0.zip",
+      "integrity": "sha256:d10ce0ca915de929873d29d009083d96dee14fa6f9505ee448fcb4c36e39cfac"
     }
   ]
 }
