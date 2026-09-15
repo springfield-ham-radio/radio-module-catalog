@@ -24,7 +24,7 @@
       "package": "@springfield/radio-module-kenwood",
       "manufacturer": "Kenwood",
       "description": "Kenwood TH-F6, TH-D74, and TM-D710A",
-      "version": "1.8.0",
+      "version": "1.9.2",
       "radios": [
         {
           "modelId": "kenwood-th-d74",
@@ -44,8 +44,8 @@
       ],
       "supportedRadios": ["kenwood-th-d74", "kenwood-th-f6", "kenwood-tm-d710a"],
       "minApiVersion": "17.3.0",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v1.8.0/radio-module-kenwood-1.8.0.zip",
-      "integrity": "sha256:d10ce0ca915de929873d29d009083d96dee14fa6f9505ee448fcb4c36e39cfac"
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v1.9.2/radio-module-kenwood-1.9.2.zip",
+      "integrity": "sha256:e19cb4ca908a61c34c25c0f29de49d15c7ae37c4d13e52bf0a122b211d92fc90"
     }
   ]
 }
