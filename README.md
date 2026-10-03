@@ -20,3 +20,7 @@ See [`catalog.schema.json`](./catalog.schema.json). Keep `schemaVersion` at `1` 
 ## Local preview
 
 Serve this directory over HTTPS or use a local static server when testing catalog fetch against a non-Pages URL (override via the app’s catalog URL setting if available).
+
+## License
+
+MIT / Bryan Hunt. See [LICENSE](./LICENSE).
