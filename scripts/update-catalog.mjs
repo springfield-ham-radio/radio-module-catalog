@@ -5,10 +5,11 @@
  * Usage:
  *   node scripts/update-catalog.mjs [--dry-run] [--catalog path] [--schema path] [--report path]
  *
- * Reads each module downloadUrl, loads that repo's latest non-draft, non-prerelease
- * release, and updates version, downloadUrl, integrity, radios, and supportedRadios
- * from the module zip. A published release older than the catalog entry is left in
- * place so a newer pin is not replaced by an older asset.
+ * Reads each module downloadUrl, loads that repo's latest published release
+ * (drafts and prereleases are rejected), downloads the module zip, and checks
+ * the bytes against the release digest. version, downloadUrl, integrity, radios,
+ * and supportedRadios are taken from that verified asset, including when it is
+ * newer than the catalog pin.
  */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -207,28 +208,24 @@ export function radiosFromZip(buffer) {
 }
 
 export function applyReleaseAsset(moduleEntry, release, zipBuffer) {
-  const version = versionFromTag(release.tag_name);
-  if (compareSemver(version, moduleEntry.version) < 0) {
-    return {
-      module: moduleEntry,
-      change: {
-        id: moduleEntry.id,
-        action: "skipped-downgrade",
-        from: moduleEntry.version,
-        to: version,
-      },
-    };
+  if (release.draft || release.prerelease) {
+    throw new Error(`${moduleEntry.id} release ${release.tag_name} is not a published release`);
   }
 
+  const version = versionFromTag(release.tag_name);
   const asset = selectModuleZipAsset(release.assets, version);
+  if (typeof asset.browser_download_url !== "string" || asset.browser_download_url.length === 0) {
+    throw new Error(`${moduleEntry.id} release ${release.tag_name} zip has no download URL`);
+  }
+
   const integrity = sha256Integrity(zipBuffer);
-  if (typeof asset.digest === "string" && asset.digest.length > 0) {
-    const expected = asset.digest.toLowerCase();
-    if (expected !== integrity.toLowerCase()) {
-      throw new Error(
-        `${moduleEntry.id} zip ${integrity} does not match release asset digest ${asset.digest}`,
-      );
-    }
+  if (typeof asset.digest !== "string" || asset.digest.length === 0) {
+    throw new Error(`${moduleEntry.id} release ${release.tag_name} zip has no checksum to verify`);
+  }
+  if (asset.digest.toLowerCase() !== integrity.toLowerCase()) {
+    throw new Error(
+      `${moduleEntry.id} zip ${integrity} does not match release asset digest ${asset.digest}`,
+    );
   }
 
   const radios = radiosFromZip(zipBuffer);
@@ -434,18 +431,6 @@ export async function syncCatalog(catalog, { token, fetchImpl } = {}) {
     const repo = parseGithubRepo(moduleEntry.downloadUrl);
     const release = await fetchLatestPublishedRelease(repo, { token, fetchImpl });
     const remoteVersion = versionFromTag(release.tag_name);
-
-    if (compareSemver(remoteVersion, moduleEntry.version) < 0) {
-      modules.push(moduleEntry);
-      changes.push({
-        id: moduleEntry.id,
-        action: "skipped-downgrade",
-        from: moduleEntry.version,
-        to: remoteVersion,
-      });
-      continue;
-    }
-
     const asset = selectModuleZipAsset(release.assets, remoteVersion);
     const zipBuffer = await downloadZip(asset.browser_download_url, fetchImpl);
     const result = applyReleaseAsset(moduleEntry, release, zipBuffer);

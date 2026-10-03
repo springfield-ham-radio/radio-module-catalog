@@ -14,6 +14,7 @@ import {
   radiosFromZip,
   selectModuleZipAsset,
   sha256Integrity,
+  syncCatalog,
   validateCatalog,
 } from "./update-catalog.mjs";
 
@@ -142,20 +143,126 @@ test("applyReleaseAsset refreshes release fields and keeps manufacturer metadata
   validateCatalog({ schemaVersion: 1, modules: [result.module] }, schema);
 });
 
-test("applyReleaseAsset does not replace a newer catalog pin with an older published release", () => {
+test("applyReleaseAsset rejects a draft and a checksum that does not match the zip", () => {
+  const zip = storedZip([
+    {
+      name: "configs/baofeng-uv5r.json",
+      content: Buffer.from(JSON.stringify({ id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" } })),
+    },
+  ]);
   const current = {
     id: "baofeng",
-    version: "3.7.1",
-    downloadUrl: "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.1/radio-module-baofeng-3.7.1.zip",
+    version: "3.6.1",
+    downloadUrl:
+      "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-3.6.1.zip",
   };
-  const result = applyReleaseAsset(
-    current,
-    { tag_name: "v3.6.1", assets: [] },
-    Buffer.alloc(0),
-  );
+  const asset = {
+    name: "radio-module-baofeng-3.7.1.zip",
+    browser_download_url:
+      "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.1/radio-module-baofeng-3.7.1.zip",
+    digest: sha256Integrity(zip),
+  };
 
-  assert.equal(result.change.action, "skipped-downgrade");
-  assert.equal(result.module, current);
+  assert.throws(
+    () => applyReleaseAsset(current, { tag_name: "v3.7.1", draft: true, prerelease: false, assets: [asset] }, zip),
+    /not a published release/,
+  );
+  assert.throws(
+    () =>
+      applyReleaseAsset(
+        current,
+        {
+          tag_name: "v3.7.1",
+          draft: false,
+          prerelease: false,
+          assets: [{ ...asset, digest: `sha256:${"ab".repeat(32)}` }],
+        },
+        zip,
+      ),
+    /does not match release asset digest/,
+  );
+});
+
+test("syncCatalog moves Baofeng to a newer published release after hashing the zip", async () => {
+  const zip = storedZip([
+    {
+      name: "configs/baofeng-uv5r.json",
+      content: Buffer.from(JSON.stringify({ id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" } })),
+    },
+  ]);
+  const integrity = sha256Integrity(zip);
+  const downloadUrl =
+    "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.2/radio-module-baofeng-3.7.2.zip";
+  const release = {
+    tag_name: "v3.7.2",
+    draft: false,
+    prerelease: false,
+    assets: [
+      {
+        name: "radio-module-baofeng-3.7.2.zip",
+        label: "Radio module JSON package (zip)",
+        browser_download_url: downloadUrl,
+        digest: integrity,
+      },
+    ],
+  };
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith("/releases/latest")) {
+      return { ok: true, json: async () => release };
+    }
+    if (String(url) === downloadUrl) {
+      return {
+        ok: true,
+        arrayBuffer: async () => zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength),
+      };
+    }
+    throw new Error(`unexpected URL ${url}`);
+  };
+  const catalog = {
+    schemaVersion: 1,
+    modules: [
+      {
+        id: "baofeng",
+        package: "@springfield/radio-module-baofeng",
+        manufacturer: "Baofeng",
+        description: "Baofeng UV-5R series (UV-5R and UV-5RE Plus share one config)",
+        version: "3.6.1",
+        radios: [{ modelId: "baofeng-uv5r", name: "Baofeng UV-5R", config: "configs/baofeng-uv5r.json" }],
+        supportedRadios: ["baofeng-uv5r"],
+        minApiVersion: "17.3.0",
+        downloadUrl:
+          "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-3.6.1.zip",
+        integrity: "sha256:2020c229dc81230f8305464e2eb327e508e21b41ea4651f1a60b9f18672da9ce",
+      },
+    ],
+  };
+
+  const result = await syncCatalog(catalog, { fetchImpl });
+  assert.equal(result.changes[0].action, "updated");
+  assert.equal(result.catalog.modules[0].version, "3.7.2");
+  assert.equal(result.catalog.modules[0].downloadUrl, downloadUrl);
+  assert.equal(result.catalog.modules[0].integrity, integrity);
+  validateCatalog(result.catalog, schema);
+});
+
+test("syncCatalog refuses a draft returned as the latest release", async () => {
+  const catalog = {
+    schemaVersion: 1,
+    modules: [
+      {
+        id: "baofeng",
+        version: "3.6.1",
+        downloadUrl:
+          "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-3.6.1.zip",
+      },
+    ],
+  };
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => ({ tag_name: "v3.7.1", draft: true, prerelease: false, assets: [] }),
+  });
+
+  await assert.rejects(() => syncCatalog(catalog, { fetchImpl }), /not a published release/);
 });
 
 test("formatCatalog is valid JSON and matches the catalog schema", () => {
@@ -205,7 +312,7 @@ test("dry-run does not write the catalog", () => {
   );
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /skipped-downgrade/);
+  assert.match(result.stdout, /baofeng: updated 9\.9\.9 -> 3\.6\.1/);
   assert.match(result.stdout, /dry-run/);
   assert.equal(readFileSync(catalogPath, "utf8"), `${JSON.stringify(original, null, 2)}\n`);
   rmSync(directory, { recursive: true, force: true });
