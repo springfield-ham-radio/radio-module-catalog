@@ -1,0 +1,76 @@
+name: Update module catalog
+
+on:
+  schedule:
+    # Hourly. GitHub may delay the schedule; repository_dispatch and workflow_dispatch cover immediate runs.
+    - cron: "23 * * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    types: [module-released]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-module-catalog
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test catalog sync
+        run: node --test scripts/update-catalog.test.mjs
+
+      - name: Refresh catalog.json from published module releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/update-catalog.mjs --report /tmp/sync-report.json
+
+      - name: Open or update pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet -- catalog.json; then
+            echo "Catalog already matches the latest published module releases."
+            exit 0
+          fi
+
+          branch="chore/sync-module-releases"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add catalog.json
+          git commit -m "chore: sync radio module releases"
+          git push --force origin "HEAD:${branch}"
+
+          body="$(python3 - << 'PY'
+          import json
+          report = json.load(open("/tmp/sync-report.json"))
+          lines = [
+              "Automated catalog sync from the latest published GitHub release of each module.",
+              "",
+          ]
+          for change in report["changes"]:
+              lines.append(f"- `{change['id']}`: {change['action']} {change['from']} -> {change['to']}")
+          lines.extend([
+              "",
+              "The workflow uses GITHUB_TOKEN only. Main is protected, so this branch needs a pull request.",
+          ])
+          print("\n".join(lines))
+          PY
+          )"
+
+          existing="$(gh pr list --base main --head "$branch" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "chore: sync radio module releases" --body "$body"
+          else
+            gh pr create --base main --head "$branch" --title "chore: sync radio module releases" --body "$body"
+          fi
