@@ -1,0 +1,16 @@
+name: auto-fix
+
+# Adding the `auto-fix` label to an issue starts an automated
+# reproduce-and-fix agent that opens a draft PR. See
+# springfield-ham-radio/.github/.github/workflows/auto-fix.yml
+on:
+  issues:
+    types: [labeled]
+
+permissions: {}
+
+jobs:
+  auto-fix:
+    if: github.event.label.name == 'auto-fix'
+    uses: springfield-ham-radio/.github/.github/workflows/auto-fix.yml@main
+    secrets: inherit
