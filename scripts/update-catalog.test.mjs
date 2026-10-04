@@ -10,6 +10,7 @@ import {
   applyReleaseAsset,
   compareSemver,
   formatCatalog,
+  main,
   parseGithubRepo,
   radiosFromZip,
   selectModuleZipAsset,
@@ -17,6 +18,10 @@ import {
   syncCatalog,
   validateCatalog,
 } from "./update-catalog.mjs";
+
+globalThis.fetch = async (url) => {
+  throw new Error(`tests must not call the network: ${url}`);
+};
 
 const schema = JSON.parse(readFileSync(new URL("../catalog.schema.json", import.meta.url), "utf8"));
 
@@ -273,7 +278,43 @@ test("formatCatalog is valid JSON and matches the catalog schema", () => {
   assert.equal(formatted, formatCatalog(parsed));
 });
 
-test("dry-run does not write the catalog", () => {
+test("dry-run does not write the catalog", async () => {
+  const zip = storedZip([
+    {
+      name: "configs/baofeng-uv5r.json",
+      content: Buffer.from(JSON.stringify({ id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" } })),
+    },
+  ]);
+  const integrity = sha256Integrity(zip);
+  const downloadUrl =
+    "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-3.6.1.zip";
+  const release = {
+    tag_name: "v3.6.1",
+    draft: false,
+    prerelease: false,
+    assets: [
+      {
+        name: "radio-module-baofeng-3.6.1.zip",
+        label: "Radio module JSON package (zip)",
+        browser_download_url: downloadUrl,
+        digest: integrity,
+      },
+    ],
+  };
+  const fetchImpl = async (url) => {
+    const href = String(url);
+    if (href.endsWith("/releases/latest")) {
+      return { ok: true, json: async () => release };
+    }
+    if (href === downloadUrl) {
+      return {
+        ok: true,
+        arrayBuffer: async () => zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength),
+      };
+    }
+    throw new Error(`unexpected URL ${href}`);
+  };
+
   const directory = mkdtempSync(join(tmpdir(), "catalog-dry-"));
   const catalogPath = join(directory, "catalog.json");
   const original = {
@@ -296,26 +337,38 @@ test("dry-run does not write the catalog", () => {
       },
     ],
   };
-  writeFileSync(catalogPath, `${JSON.stringify(original, null, 2)}\n`);
+  const originalText = `${JSON.stringify(original, null, 2)}\n`;
+  writeFileSync(catalogPath, originalText);
 
-  const result = spawnSync(
-    process.execPath,
-    [
-      new URL("./update-catalog.mjs", import.meta.url).pathname,
-      "--dry-run",
-      "--catalog",
-      catalogPath,
-      "--schema",
-      new URL("../catalog.schema.json", import.meta.url).pathname,
-    ],
-    { encoding: "utf8" },
-  );
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /baofeng: updated 9\.9\.9 -> 3\.6\.1/);
-  assert.match(result.stdout, /dry-run/);
-  assert.equal(readFileSync(catalogPath, "utf8"), `${JSON.stringify(original, null, 2)}\n`);
-  rmSync(directory, { recursive: true, force: true });
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => {
+    logs.push(args.join(" "));
+  };
+  try {
+    const report = await main(
+      [
+        "--dry-run",
+        "--catalog",
+        catalogPath,
+        "--schema",
+        new URL("../catalog.schema.json", import.meta.url).pathname,
+      ],
+      {},
+      fetchImpl,
+    );
+    const output = logs.join("\n");
+    assert.equal(report.dryRun, true);
+    assert.equal(report.wrote, false);
+    assert.equal(report.changes[0].action, "updated");
+    assert.equal(report.changes[0].to, "3.6.1");
+    assert.match(output, /baofeng: updated 9\.9\.9 -> 3\.6\.1/);
+    assert.match(output, /dry-run/);
+    assert.equal(readFileSync(catalogPath, "utf8"), originalText);
+  } finally {
+    console.log = originalLog;
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 function storedZip(files) {
