@@ -447,12 +447,12 @@ export async function syncCatalog(catalog, { token, fetchImpl } = {}) {
   };
 }
 
-export async function main(argv = process.argv.slice(2), env = process.env) {
+export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = fetch) {
   const options = parseArgs(argv);
   const schema = JSON.parse(readFileSync(options.schemaPath, "utf8"));
   const catalog = JSON.parse(readFileSync(options.catalogPath, "utf8"));
   const token = env.GITHUB_TOKEN || env.GH_TOKEN || "";
-  const { catalog: nextCatalog, changes } = await syncCatalog(catalog, { token });
+  const { catalog: nextCatalog, changes } = await syncCatalog(catalog, { token, fetchImpl });
   validateCatalog(nextCatalog, schema);
 
   const currentText = readFileSync(options.catalogPath, "utf8");

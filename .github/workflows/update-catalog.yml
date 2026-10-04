@@ -1,6 +1,7 @@
 name: Update module catalog
 
 on:
+  pull_request:
   schedule:
     # Hourly. GitHub may delay the schedule; repository_dispatch and workflow_dispatch cover immediate runs.
     - cron: "23 * * * *"
@@ -17,8 +18,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sync:
+  test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +31,17 @@ jobs:
 
       - name: Test catalog sync
         run: node --test scripts/update-catalog.test.mjs
+
+  sync:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Refresh catalog.json from published module releases
         env:
