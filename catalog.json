@@ -6,7 +6,7 @@
       "package": "@springfield/radio-module-baofeng",
       "manufacturer": "Baofeng",
       "description": "Baofeng UV-5R series (UV-5R and UV-5RE Plus share one config)",
-      "version": "3.6.1",
+      "version": "3.7.2",
       "radios": [
         {
           "modelId": "baofeng-uv5r",
@@ -16,8 +16,8 @@
       ],
       "supportedRadios": ["baofeng-uv5r"],
       "minApiVersion": "17.3.0",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-3.6.1.zip",
-      "integrity": "sha256:2020c229dc81230f8305464e2eb327e508e21b41ea4651f1a60b9f18672da9ce"
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.2/radio-module-baofeng-3.7.2.zip",
+      "integrity": "sha256:e5821ef6b05074ff2c42fa7a444d809b8630d7b9fe0d442859e25f5e5fdef4ea"
     },
     {
       "id": "kenwood",
