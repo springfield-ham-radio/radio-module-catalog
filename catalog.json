@@ -43,8 +43,8 @@
       "version": "3.7.0",
       "config": "configs/baofeng-uv5r.json",
       "minApiVersion": "18.0.1",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.0/radio-module-baofeng-uv5r-3.7.0.zip",
-      "integrity": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v4.0.0/radio-module-baofeng-uv5r-3.7.0.zip",
+      "integrity": "sha256:1481e2eb3a6f569af136533036b32d48bbbb14023a03761c859c0d42e2b674a5"
     }
   ]
 }
