@@ -1,25 +1,30 @@
 #!/usr/bin/env node
 /**
- * Refresh catalog.json from the latest published GitHub release of each module.
+ * Refresh catalog.json from published per-radio GitHub Release assets (ADR 0009).
  *
  * Usage:
  *   node scripts/update-catalog.mjs [--dry-run] [--catalog path] [--schema path] [--report path]
  *
- * Reads each module downloadUrl, loads that repo's latest published release
- * (drafts and prereleases are rejected), downloads the module zip, and checks
- * the bytes against the release digest. version, downloadUrl, integrity, radios,
- * and supportedRadios are taken from that verified asset, including when it is
- * newer than the catalog pin.
+ * For each catalog entry, resolves the manufacturer repo from downloadUrl, scans every
+ * published release (drafts and prereleases are skipped), considers assets named
+ * radio-module-<id>-<semver>.zip, picks the highest stable semver, downloads the zip,
+ * verifies the release digest, and sets version, name, config, minApiVersion, downloadUrl,
+ * and integrity from that asset. package, manufacturer, and description are preserved
+ * unless the config display name changes.
  */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { inflateRawSync } from "node:zlib";
-import { pathToFileURL } from "node:url";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseModuleCatalog } from "@springfield/ham-radio-registry";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDirectory, "..");
+
+/** Matches radio-module-<modelId>-<major.minor.patch>.zip (not legacy manufacturer zips). */
+export const PER_RADIO_ASSET_PATTERN =
+  /^radio-module-([a-z0-9]+(?:-[a-z0-9]+)+)-((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))\.zip$/i;
 
 export function parseArgs(argv) {
   const options = {
@@ -80,34 +85,54 @@ export function compareSemver(left, right) {
   return 0;
 }
 
-export function selectModuleZipAsset(assets, version) {
-  const zips = (assets || []).filter(
-    (asset) => typeof asset?.name === "string" && asset.name.toLowerCase().endsWith(".zip"),
-  );
-  let candidates = zips.filter((asset) => /^radio-module-.+\.zip$/i.test(asset.name));
-  if (candidates.length === 0) {
-    candidates = zips;
+export function parsePerRadioAssetName(assetName, modelId) {
+  const match = PER_RADIO_ASSET_PATTERN.exec(assetName);
+  if (!match) {
+    return undefined;
   }
+  const [, assetModelId, version] = match;
+  if (assetModelId !== modelId) {
+    return undefined;
+  }
+  return version;
+}
 
-  if (version) {
-    const versioned = candidates.filter((asset) => asset.name.includes(version));
-    if (versioned.length > 0) {
-      candidates = versioned;
+export function expectedPerRadioAssetName(modelId, version) {
+  return `radio-module-${modelId}-${version}.zip`;
+}
+
+/**
+ * Collect the highest semver per-radio asset for modelId across published releases.
+ * Returns undefined when no matching asset exists.
+ */
+export function selectHighestPerRadioAsset(releases, modelId) {
+  let best;
+
+  for (const release of releases || []) {
+    if (release.draft || release.prerelease) {
+      continue;
+    }
+
+    for (const asset of release.assets || []) {
+      if (typeof asset?.name !== "string") {
+        continue;
+      }
+      const version = parsePerRadioAssetName(asset.name, modelId);
+      if (!version) {
+        continue;
+      }
+      if (
+        !best ||
+        compareSemver(version, best.version) > 0 ||
+        (compareSemver(version, best.version) === 0 &&
+          compareSemver(versionFromTag(release.tag_name), versionFromTag(best.release.tag_name)) > 0)
+      ) {
+        best = { asset, release, version };
+      }
     }
   }
 
-  const labeled = candidates.filter(
-    (asset) => typeof asset.label === "string" && /radio module/i.test(asset.label),
-  );
-  if (labeled.length === 1) {
-    return labeled[0];
-  }
-  if (candidates.length === 1) {
-    return candidates[0];
-  }
-
-  const names = candidates.map((asset) => asset.name).join(", ");
-  throw new Error(`expected one module zip asset, found ${names || "none"}`);
+  return best;
 }
 
 export function sha256Integrity(buffer) {
@@ -181,39 +206,59 @@ function findEndOfCentralDirectory(data) {
   throw new Error("zip end of central directory not found");
 }
 
-export function radiosFromZip(buffer) {
-  const configs = readZipEntries(buffer)
-    .filter((entry) => /^configs\/[^/]+\.json$/.test(entry.name))
-    .sort((left, right) => left.name.localeCompare(right.name));
+export function configFromZip(buffer, expectedModelId) {
+  const configs = readZipEntries(buffer).filter((entry) => /^configs\/[^/]+\.json$/.test(entry.name));
 
-  if (configs.length === 0) {
-    throw new Error("module zip does not contain configs/*.json");
+  if (configs.length !== 1) {
+    throw new Error(`module zip must contain exactly one configs/*.json, found ${configs.length}`);
   }
 
-  return configs.map((entry) => {
-    const config = JSON.parse(entry.content.toString("utf8"));
-    const modelId = config?.id?.model;
-    const name = config?.id?.name;
+  const entry = configs[0];
+  const parsed = JSON.parse(entry.content.toString("utf8"));
+  const modelId = parsed?.id?.model;
+  const name = parsed?.id?.name;
+  const version = parsed?.version;
+  const minApiVersion = parsed?.minApiVersion;
 
-    if (typeof modelId !== "string" || modelId.length === 0 || typeof name !== "string" || name.length === 0) {
-      throw new Error(`${entry.name} is missing id.model or id.name`);
-    }
+  if (typeof modelId !== "string" || modelId.length === 0) {
+    throw new Error(`${entry.name} is missing id.model`);
+  }
+  if (expectedModelId && modelId !== expectedModelId) {
+    throw new Error(`${entry.name} id.model ${modelId} does not match catalog id ${expectedModelId}`);
+  }
+  if (typeof name !== "string" || name.length === 0) {
+    throw new Error(`${entry.name} is missing id.name`);
+  }
+  if (typeof version !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+    throw new Error(`${entry.name} is missing a major.minor.patch version`);
+  }
+  if (typeof minApiVersion !== "string" || minApiVersion.length === 0) {
+    throw new Error(`${entry.name} is missing minApiVersion`);
+  }
+  if (entry.name !== `configs/${modelId}.json`) {
+    throw new Error(`${entry.name} must be configs/${modelId}.json`);
+  }
 
-    return {
-      modelId,
-      name,
-      config: entry.name,
-    };
-  });
+  return {
+    modelId,
+    name,
+    version,
+    minApiVersion,
+    config: entry.name,
+  };
 }
 
-export function applyReleaseAsset(moduleEntry, release, zipBuffer) {
+export function applyVerifiedAsset(moduleEntry, selection, zipBuffer) {
+  const { asset, release, version: assetVersion } = selection;
+
   if (release.draft || release.prerelease) {
     throw new Error(`${moduleEntry.id} release ${release.tag_name} is not a published release`);
   }
 
-  const version = versionFromTag(release.tag_name);
-  const asset = selectModuleZipAsset(release.assets, version);
+  if (asset.name !== expectedPerRadioAssetName(moduleEntry.id, assetVersion)) {
+    throw new Error(`${moduleEntry.id} asset name ${asset.name} does not match version ${assetVersion}`);
+  }
+
   if (typeof asset.browser_download_url !== "string" || asset.browser_download_url.length === 0) {
     throw new Error(`${moduleEntry.id} release ${release.tag_name} zip has no download URL`);
   }
@@ -228,12 +273,19 @@ export function applyReleaseAsset(moduleEntry, release, zipBuffer) {
     );
   }
 
-  const radios = radiosFromZip(zipBuffer);
+  const config = configFromZip(zipBuffer, moduleEntry.id);
+  if (config.version !== assetVersion) {
+    throw new Error(
+      `${moduleEntry.id} zip config version ${config.version} does not match asset version ${assetVersion}`,
+    );
+  }
+
   const next = {
     ...moduleEntry,
-    version,
-    radios,
-    supportedRadios: radios.map((radio) => radio.modelId),
+    name: config.name,
+    version: config.version,
+    config: config.config,
+    minApiVersion: config.minApiVersion,
     downloadUrl: asset.browser_download_url,
     integrity,
   };
@@ -245,7 +297,7 @@ export function applyReleaseAsset(moduleEntry, release, zipBuffer) {
       id: moduleEntry.id,
       action: changed ? "updated" : "unchanged",
       from: moduleEntry.version,
-      to: version,
+      to: config.version,
     },
   };
 }
@@ -260,25 +312,7 @@ export function formatCatalog(catalog) {
     const keys = Object.keys(moduleEntry);
     keys.forEach((key, keyIndex) => {
       const comma = keyIndex === keys.length - 1 ? "" : ",";
-      const value = moduleEntry[key];
-      if (key === "radios") {
-        lines.push('      "radios": [');
-        value.forEach((radio, radioIndex) => {
-          const radioComma = radioIndex === value.length - 1 ? "" : ",";
-          lines.push("        {");
-          ["modelId", "name", "config"].forEach((radioKey, radioKeyIndex, radioKeys) => {
-            const radioKeyComma = radioKeyIndex === radioKeys.length - 1 ? "" : ",";
-            lines.push(`          "${radioKey}": ${JSON.stringify(radio[radioKey])}${radioKeyComma}`);
-          });
-          lines.push(`        }${radioComma}`);
-        });
-        lines.push(`      ]${comma}`);
-      } else if (key === "supportedRadios") {
-        const inline = value.map((item) => JSON.stringify(item)).join(", ");
-        lines.push(`      "supportedRadios": [${inline}]${comma}`);
-      } else {
-        lines.push(`      "${key}": ${JSON.stringify(value)}${comma}`);
-      }
+      lines.push(`      "${key}": ${JSON.stringify(moduleEntry[key])}${comma}`);
     });
     const moduleComma = moduleIndex === catalog.modules.length - 1 ? "" : ",";
     lines.push(`    }${moduleComma}`);
@@ -295,6 +329,7 @@ export function validateCatalog(catalog, schema) {
   if (errors.length > 0) {
     throw new Error(`catalog.json does not match catalog.schema.json:\n${errors.join("\n")}`);
   }
+  parseModuleCatalog(JSON.stringify(catalog));
 }
 
 function checkSchema(value, schema, path, errors) {
@@ -377,26 +412,36 @@ function checkSchema(value, schema, path, errors) {
   }
 }
 
-export async function fetchLatestPublishedRelease(repo, { token, fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(
-    `https://api.github.com/repos/${repo.owner}/${repo.repo}/releases/latest`,
-    {
-      headers: githubHeaders(token),
-      signal: AbortSignal.timeout(60_000),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(
-      `GitHub latest release for ${repo.owner}/${repo.repo} returned HTTP ${response.status}`,
+export async function fetchPublishedReleases(repo, { token, fetchImpl = fetch } = {}) {
+  const releases = [];
+  let page = 1;
+
+  while (true) {
+    const response = await fetchImpl(
+      `https://api.github.com/repos/${repo.owner}/${repo.repo}/releases?per_page=100&page=${page}`,
+      {
+        headers: githubHeaders(token),
+        signal: AbortSignal.timeout(60_000),
+      },
     );
+    if (!response.ok) {
+      throw new Error(
+        `GitHub releases for ${repo.owner}/${repo.repo} returned HTTP ${response.status}`,
+      );
+    }
+
+    const batch = await response.json();
+    if (!Array.isArray(batch) || batch.length === 0) {
+      break;
+    }
+    releases.push(...batch);
+    if (batch.length < 100) {
+      break;
+    }
+    page += 1;
   }
 
-  const release = await response.json();
-  if (release.draft || release.prerelease) {
-    throw new Error(`latest release ${release.tag_name} for ${repo.repo} is not a published release`);
-  }
-
-  return release;
+  return releases;
 }
 
 export async function downloadZip(url, fetchImpl = fetch) {
@@ -426,14 +471,32 @@ function githubHeaders(token) {
 export async function syncCatalog(catalog, { token, fetchImpl } = {}) {
   const modules = [];
   const changes = [];
+  const releasesByRepo = new Map();
 
   for (const moduleEntry of catalog.modules) {
     const repo = parseGithubRepo(moduleEntry.downloadUrl);
-    const release = await fetchLatestPublishedRelease(repo, { token, fetchImpl });
-    const remoteVersion = versionFromTag(release.tag_name);
-    const asset = selectModuleZipAsset(release.assets, remoteVersion);
-    const zipBuffer = await downloadZip(asset.browser_download_url, fetchImpl);
-    const result = applyReleaseAsset(moduleEntry, release, zipBuffer);
+    const repoKey = `${repo.owner}/${repo.repo}`;
+    let releases = releasesByRepo.get(repoKey);
+    if (!releases) {
+      releases = await fetchPublishedReleases(repo, { token, fetchImpl });
+      releasesByRepo.set(repoKey, releases);
+    }
+
+    const selection = selectHighestPerRadioAsset(releases, moduleEntry.id);
+    if (!selection) {
+      modules.push(moduleEntry);
+      changes.push({
+        id: moduleEntry.id,
+        action: "unchanged",
+        from: moduleEntry.version,
+        to: moduleEntry.version,
+        reason: "no published per-radio asset",
+      });
+      continue;
+    }
+
+    const zipBuffer = await downloadZip(selection.asset.browser_download_url, fetchImpl);
+    const result = applyVerifiedAsset(moduleEntry, selection, zipBuffer);
     modules.push(result.module);
     changes.push(result.change);
   }
@@ -472,7 +535,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
   }
 
   for (const change of changes) {
-    console.log(`${change.id}: ${change.action} ${change.from} -> ${change.to}`);
+    const suffix = change.reason ? ` (${change.reason})` : "";
+    console.log(`${change.id}: ${change.action} ${change.from} -> ${change.to}${suffix}`);
   }
   if (options.dryRun) {
     console.log("dry-run: catalog.json was not modified");

@@ -1,51 +1,50 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "modules": [
     {
-      "id": "baofeng",
-      "package": "@springfield/radio-module-baofeng",
-      "manufacturer": "Baofeng",
-      "description": "Baofeng UV-5R series (UV-5R and UV-5RE Plus share one config)",
-      "version": "3.7.2",
-      "radios": [
-        {
-          "modelId": "baofeng-uv5r",
-          "name": "Baofeng UV-5R",
-          "config": "configs/baofeng-uv5r.json"
-        }
-      ],
-      "supportedRadios": ["baofeng-uv5r"],
-      "minApiVersion": "17.3.0",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.2/radio-module-baofeng-3.7.2.zip",
-      "integrity": "sha256:e5821ef6b05074ff2c42fa7a444d809b8630d7b9fe0d442859e25f5e5fdef4ea"
+      "id": "kenwood-th-f6",
+      "package": "@springfield/radio-module-kenwood-th-f6",
+      "manufacturer": "Kenwood",
+      "name": "Kenwood TH-F6",
+      "version": "1.11.0",
+      "config": "configs/kenwood-th-f6.json",
+      "minApiVersion": "18.0.1",
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.0.0/radio-module-kenwood-th-f6-1.11.0.zip",
+      "integrity": "sha256:838e5dd215c9d6e7458f8f9399fd0a1acde9875c4c57243e16980c9fa2bc1e15"
     },
     {
-      "id": "kenwood",
-      "package": "@springfield/radio-module-kenwood",
+      "id": "kenwood-th-d74",
+      "package": "@springfield/radio-module-kenwood-th-d74",
       "manufacturer": "Kenwood",
-      "description": "Kenwood TH-F6, TH-D74, and TM-D710A",
-      "version": "1.11.2",
-      "radios": [
-        {
-          "modelId": "kenwood-th-d74",
-          "name": "Kenwood TH-D74",
-          "config": "configs/kenwood-th-d74.json"
-        },
-        {
-          "modelId": "kenwood-th-f6",
-          "name": "Kenwood TH-F6",
-          "config": "configs/kenwood-th-f6.json"
-        },
-        {
-          "modelId": "kenwood-tm-d710a",
-          "name": "Kenwood TM-D710A",
-          "config": "configs/kenwood-tm-d710a.json"
-        }
-      ],
-      "supportedRadios": ["kenwood-th-d74", "kenwood-th-f6", "kenwood-tm-d710a"],
-      "minApiVersion": "17.3.0",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v1.11.2/radio-module-kenwood-1.11.2.zip",
-      "integrity": "sha256:9940ac5eeb0cf47bf5e55afa96faadcc1c60e786ef2d08b898cb862429c77be1"
+      "name": "Kenwood TH-D74",
+      "version": "1.11.1",
+      "config": "configs/kenwood-th-d74.json",
+      "minApiVersion": "18.0.1",
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.0.0/radio-module-kenwood-th-d74-1.11.1.zip",
+      "integrity": "sha256:596ed3c163d959f29e669b2b9364ab101245738959edcd666628663ef153c7af"
+    },
+    {
+      "id": "kenwood-tm-d710a",
+      "package": "@springfield/radio-module-kenwood-tm-d710a",
+      "manufacturer": "Kenwood",
+      "name": "Kenwood TM-D710A",
+      "version": "1.11.0",
+      "config": "configs/kenwood-tm-d710a.json",
+      "minApiVersion": "18.0.1",
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.0.0/radio-module-kenwood-tm-d710a-1.11.0.zip",
+      "integrity": "sha256:68f14fb9846fdd5b2c80b7ab050eb7e3466ec74027815461eb991a7741a08b95"
+    },
+    {
+      "id": "baofeng-uv5r",
+      "package": "@springfield/radio-module-baofeng-uv5r",
+      "manufacturer": "Baofeng",
+      "name": "Baofeng UV-5R",
+      "description": "Baofeng UV-5R series (UV-5R and UV-5RE Plus share one config)",
+      "version": "3.7.0",
+      "config": "configs/baofeng-uv5r.json",
+      "minApiVersion": "18.0.1",
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.0/radio-module-baofeng-uv5r-3.7.0.zip",
+      "integrity": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     }
   ]
 }

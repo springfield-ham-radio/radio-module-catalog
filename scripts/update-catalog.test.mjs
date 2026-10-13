@@ -5,15 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { deflateRawSync } from "node:zlib";
+import { parseModuleCatalog } from "@springfield/ham-radio-registry";
 
 import {
-  applyReleaseAsset,
+  applyVerifiedAsset,
   compareSemver,
+  configFromZip,
   formatCatalog,
   main,
   parseGithubRepo,
-  radiosFromZip,
-  selectModuleZipAsset,
+  parsePerRadioAssetName,
+  selectHighestPerRadioAsset,
   sha256Integrity,
   syncCatalog,
   validateCatalog,
@@ -28,10 +30,16 @@ const schema = JSON.parse(readFileSync(new URL("../catalog.schema.json", import.
 test("parseGithubRepo reads the module repository from a release download URL", () => {
   assert.deepEqual(
     parseGithubRepo(
-      "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v1.9.2/radio-module-kenwood-1.9.2.zip",
+      "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v1.9.2/radio-module-kenwood-th-f6-1.9.2.zip",
     ),
     { owner: "springfield-ham-radio", repo: "radio-module-kenwood" },
   );
+});
+
+test("parsePerRadioAssetName accepts per-radio assets and rejects manufacturer zips", () => {
+  assert.equal(parsePerRadioAssetName("radio-module-kenwood-th-f6-1.11.0.zip", "kenwood-th-f6"), "1.11.0");
+  assert.equal(parsePerRadioAssetName("radio-module-kenwood-1.11.6.zip", "kenwood-th-f6"), undefined);
+  assert.equal(parsePerRadioAssetName("radio-module-kenwood-th-d74-1.11.1.zip", "kenwood-th-f6"), undefined);
 });
 
 test("compareSemver orders catalog versions", () => {
@@ -40,147 +48,238 @@ test("compareSemver orders catalog versions", () => {
   assert.equal(compareSemver("3.7.1", "3.7.1"), 0);
 });
 
-test("selectModuleZipAsset prefers the versioned radio-module zip", () => {
-  const asset = selectModuleZipAsset(
-    [
-      { name: "notes.txt", browser_download_url: "https://example.com/notes.txt" },
-      {
-        name: "radio-module-kenwood-1.9.2.zip",
-        label: "old",
-        browser_download_url: "https://example.com/old.zip",
-      },
-      {
-        name: "radio-module-kenwood-1.11.2.zip",
-        label: "Radio module JSON package (zip)",
-        browser_download_url: "https://example.com/new.zip",
-      },
-    ],
-    "1.11.2",
-  );
+test("selectHighestPerRadioAsset picks the highest semver across releases", () => {
+  const releases = [
+    {
+      tag_name: "v1.12.0",
+      draft: false,
+      prerelease: false,
+      assets: [
+        {
+          name: "radio-module-kenwood-th-d74-1.11.2.zip",
+          browser_download_url: "https://example.com/th-d74-1.11.2.zip",
+        },
+      ],
+    },
+    {
+      tag_name: "v1.11.0",
+      draft: false,
+      prerelease: false,
+      assets: [
+        {
+          name: "radio-module-kenwood-th-d74-1.11.1.zip",
+          browser_download_url: "https://example.com/th-d74-1.11.1.zip",
+        },
+        {
+          name: "radio-module-kenwood-th-f6-1.11.0.zip",
+          browser_download_url: "https://example.com/th-f6.zip",
+        },
+      ],
+    },
+  ];
 
-  assert.equal(asset.name, "radio-module-kenwood-1.11.2.zip");
+  const thD74 = selectHighestPerRadioAsset(releases, "kenwood-th-d74");
+  assert.equal(thD74.version, "1.11.2");
+  assert.equal(thD74.asset.name, "radio-module-kenwood-th-d74-1.11.2.zip");
+
+  const thF6 = selectHighestPerRadioAsset(releases, "kenwood-th-f6");
+  assert.equal(thF6.version, "1.11.0");
 });
 
-test("radiosFromZip reads configs from a deflated module zip", () => {
+test("selectHighestPerRadioAsset skips drafts and prereleases", () => {
+  const releases = [
+    {
+      tag_name: "v9.0.0",
+      draft: true,
+      prerelease: false,
+      assets: [{ name: "radio-module-baofeng-uv5r-9.0.0.zip", browser_download_url: "https://example.com" }],
+    },
+    {
+      tag_name: "v3.8.0-beta.1",
+      draft: false,
+      prerelease: true,
+      assets: [{ name: "radio-module-baofeng-uv5r-3.8.0.zip", browser_download_url: "https://example.com" }],
+    },
+    {
+      tag_name: "v3.7.0",
+      draft: false,
+      prerelease: false,
+      assets: [
+        {
+          name: "radio-module-baofeng-uv5r-3.7.0.zip",
+          browser_download_url: "https://example.com/stable.zip",
+        },
+      ],
+    },
+  ];
+
+  const selection = selectHighestPerRadioAsset(releases, "baofeng-uv5r");
+  assert.equal(selection.version, "3.7.0");
+});
+
+test("configFromZip reads a single config and rejects multiple configs", () => {
+  const zip = storedZip([
+    {
+      name: "configs/baofeng-uv5r.json",
+      content: Buffer.from(
+        JSON.stringify({
+          id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" },
+          version: "3.7.0",
+          minApiVersion: "18.0.1",
+        }),
+      ),
+    },
+  ]);
+
+  assert.deepEqual(configFromZip(zip, "baofeng-uv5r"), {
+    modelId: "baofeng-uv5r",
+    name: "Baofeng UV-5R",
+    version: "3.7.0",
+    minApiVersion: "18.0.1",
+    config: "configs/baofeng-uv5r.json",
+  });
+
+  const multi = storedZip([
+    {
+      name: "configs/kenwood-th-f6.json",
+      content: Buffer.from(
+        JSON.stringify({
+          id: { model: "kenwood-th-f6", name: "Kenwood TH-F6" },
+          version: "1.11.0",
+          minApiVersion: "18.0.1",
+        }),
+      ),
+    },
+    {
+      name: "configs/kenwood-th-d74.json",
+      content: Buffer.from(
+        JSON.stringify({
+          id: { model: "kenwood-th-d74", name: "Kenwood TH-D74" },
+          version: "1.11.1",
+          minApiVersion: "18.0.1",
+        }),
+      ),
+    },
+  ]);
+  assert.throws(() => configFromZip(multi, "kenwood-th-f6"), /exactly one configs/);
+});
+
+test("configFromZip reads configs from a deflated module zip", () => {
   const directory = mkdtempSync(join(tmpdir(), "catalog-zip-"));
   try {
     mkdirSync(join(directory, "configs"));
     writeFileSync(
       join(directory, "configs", "kenwood-th-f6.json"),
-      JSON.stringify({ id: { model: "kenwood-th-f6", name: "Kenwood TH-F6" } }),
-    );
-    writeFileSync(
-      join(directory, "configs", "kenwood-th-d74.json"),
-      JSON.stringify({ id: { model: "kenwood-th-d74", name: "Kenwood TH-D74" } }),
+      JSON.stringify({
+        id: { model: "kenwood-th-f6", name: "Kenwood TH-F6" },
+        version: "1.11.0",
+        minApiVersion: "18.0.1",
+      }),
     );
     const zipPath = join(directory, "module.zip");
-    const zipResult = spawnSync(
-      "zip",
-      ["-r", zipPath, "configs"],
-      { cwd: directory, encoding: "utf8" },
-    );
+    const zipResult = spawnSync("zip", ["-r", zipPath, "configs"], { cwd: directory, encoding: "utf8" });
     assert.equal(zipResult.status, 0, zipResult.stderr);
 
-    const radios = radiosFromZip(readFileSync(zipPath));
-    assert.deepEqual(radios, [
-      { modelId: "kenwood-th-d74", name: "Kenwood TH-D74", config: "configs/kenwood-th-d74.json" },
-      { modelId: "kenwood-th-f6", name: "Kenwood TH-F6", config: "configs/kenwood-th-f6.json" },
-    ]);
+    const config = configFromZip(readFileSync(zipPath), "kenwood-th-f6");
+    assert.equal(config.modelId, "kenwood-th-f6");
+    assert.equal(config.version, "1.11.0");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test("radiosFromZip reads a stored zip entry", () => {
-  const payload = Buffer.from(
-    JSON.stringify({ id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" } }),
-  );
-  const radios = radiosFromZip(storedZip([{ name: "configs/baofeng-uv5r.json", content: payload }]));
-  assert.deepEqual(radios, [
-    { modelId: "baofeng-uv5r", name: "Baofeng UV-5R", config: "configs/baofeng-uv5r.json" },
-  ]);
-});
-
-test("applyReleaseAsset refreshes release fields and keeps manufacturer metadata", () => {
+test("applyVerifiedAsset refreshes release fields and keeps manufacturer metadata", () => {
   const zip = storedZip([
     {
       name: "configs/baofeng-uv5r.json",
-      content: Buffer.from(JSON.stringify({ id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" } })),
+      content: Buffer.from(
+        JSON.stringify({
+          id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" },
+          version: "3.7.1",
+          minApiVersion: "18.0.1",
+        }),
+      ),
     },
   ]);
   const integrity = sha256Integrity(zip);
   const current = {
-    id: "baofeng",
-    package: "@springfield/radio-module-baofeng",
+    id: "baofeng-uv5r",
+    package: "@springfield/radio-module-baofeng-uv5r",
     manufacturer: "Baofeng",
     description: "Baofeng UV-5R series (UV-5R and UV-5RE Plus share one config)",
+    name: "Baofeng UV-5R",
     version: "3.6.1",
-    radios: [{ modelId: "baofeng-uv5r", name: "Baofeng UV-5R", config: "configs/baofeng-uv5r.json" }],
-    supportedRadios: ["baofeng-uv5r"],
+    config: "configs/baofeng-uv5r.json",
     minApiVersion: "17.3.0",
     downloadUrl:
-      "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-3.6.1.zip",
+      "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-uv5r-3.6.1.zip",
     integrity: "sha256:2020c229dc81230f8305464e2eb327e508e21b41ea4651f1a60b9f18672da9ce",
   };
   const release = {
     tag_name: "v3.7.1",
     draft: false,
     prerelease: false,
-    assets: [
-      {
-        name: "radio-module-baofeng-3.7.1.zip",
-        label: "Radio module JSON package (zip)",
-        browser_download_url:
-          "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.1/radio-module-baofeng-3.7.1.zip",
-        digest: integrity,
-      },
-    ],
+  };
+  const asset = {
+    name: "radio-module-baofeng-uv5r-3.7.1.zip",
+    browser_download_url:
+      "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.1/radio-module-baofeng-uv5r-3.7.1.zip",
+    digest: integrity,
   };
 
-  const result = applyReleaseAsset(current, release, zip);
+  const result = applyVerifiedAsset(current, { asset, release, version: "3.7.1" }, zip);
   assert.equal(result.change.action, "updated");
   assert.equal(result.module.version, "3.7.1");
   assert.equal(result.module.integrity, integrity);
   assert.equal(result.module.manufacturer, "Baofeng");
   assert.equal(result.module.description, current.description);
-  assert.equal(result.module.minApiVersion, "17.3.0");
-  assert.deepEqual(result.module.supportedRadios, ["baofeng-uv5r"]);
-  validateCatalog({ schemaVersion: 1, modules: [result.module] }, schema);
+  assert.equal(result.module.minApiVersion, "18.0.1");
+  validateCatalog({ schemaVersion: 3, modules: [result.module] }, schema);
 });
 
-test("applyReleaseAsset rejects a draft and a checksum that does not match the zip", () => {
+test("applyVerifiedAsset rejects a draft and a checksum that does not match the zip", () => {
   const zip = storedZip([
     {
       name: "configs/baofeng-uv5r.json",
-      content: Buffer.from(JSON.stringify({ id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" } })),
+      content: Buffer.from(
+        JSON.stringify({
+          id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" },
+          version: "3.7.1",
+          minApiVersion: "18.0.1",
+        }),
+      ),
     },
   ]);
   const current = {
-    id: "baofeng",
+    id: "baofeng-uv5r",
     version: "3.6.1",
     downloadUrl:
-      "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-3.6.1.zip",
+      "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-uv5r-3.6.1.zip",
   };
   const asset = {
-    name: "radio-module-baofeng-3.7.1.zip",
+    name: "radio-module-baofeng-uv5r-3.7.1.zip",
     browser_download_url:
-      "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.1/radio-module-baofeng-3.7.1.zip",
+      "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.1/radio-module-baofeng-uv5r-3.7.1.zip",
     digest: sha256Integrity(zip),
   };
 
   assert.throws(
-    () => applyReleaseAsset(current, { tag_name: "v3.7.1", draft: true, prerelease: false, assets: [asset] }, zip),
+    () =>
+      applyVerifiedAsset(
+        current,
+        { asset, release: { tag_name: "v3.7.1", draft: true, prerelease: false }, version: "3.7.1" },
+        zip,
+      ),
     /not a published release/,
   );
   assert.throws(
     () =>
-      applyReleaseAsset(
+      applyVerifiedAsset(
         current,
         {
-          tag_name: "v3.7.1",
-          draft: false,
-          prerelease: false,
-          assets: [{ ...asset, digest: `sha256:${"ab".repeat(32)}` }],
+          asset: { ...asset, digest: `sha256:${"ab".repeat(32)}` },
+          release: { tag_name: "v3.7.1", draft: false, prerelease: false },
+          version: "3.7.1",
         },
         zip,
       ),
@@ -188,93 +287,109 @@ test("applyReleaseAsset rejects a draft and a checksum that does not match the z
   );
 });
 
-test("syncCatalog moves Baofeng to a newer published release after hashing the zip", async () => {
-  const zip = storedZip([
+test("syncCatalog resolves Kenwood radios when the latest release only ships one zip", async () => {
+  const thF6Zip = kenwoodZip("kenwood-th-f6", "1.11.0", "Kenwood TH-F6");
+  const thD74OldZip = kenwoodZip("kenwood-th-d74", "1.11.1", "Kenwood TH-D74");
+  const thD74NewZip = kenwoodZip("kenwood-th-d74", "1.11.2", "Kenwood TH-D74");
+  const thF6Integrity = sha256Integrity(thF6Zip);
+  const thD74OldIntegrity = sha256Integrity(thD74OldZip);
+  const thD74NewIntegrity = sha256Integrity(thD74NewZip);
+
+  const releases = [
     {
-      name: "configs/baofeng-uv5r.json",
-      content: Buffer.from(JSON.stringify({ id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" } })),
+      tag_name: "v1.12.0",
+      draft: false,
+      prerelease: false,
+      assets: [
+        {
+          name: "radio-module-kenwood-th-d74-1.11.2.zip",
+          browser_download_url:
+            "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v1.12.0/radio-module-kenwood-th-d74-1.11.2.zip",
+          digest: thD74NewIntegrity,
+        },
+      ],
     },
-  ]);
-  const integrity = sha256Integrity(zip);
-  const downloadUrl =
-    "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.2/radio-module-baofeng-3.7.2.zip";
-  const release = {
-    tag_name: "v3.7.2",
-    draft: false,
-    prerelease: false,
-    assets: [
-      {
-        name: "radio-module-baofeng-3.7.2.zip",
-        label: "Radio module JSON package (zip)",
-        browser_download_url: downloadUrl,
-        digest: integrity,
-      },
-    ],
-  };
+    {
+      tag_name: "v1.11.0",
+      draft: false,
+      prerelease: false,
+      assets: [
+        {
+          name: "radio-module-kenwood-th-f6-1.11.0.zip",
+          browser_download_url:
+            "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v1.11.0/radio-module-kenwood-th-f6-1.11.0.zip",
+          digest: thF6Integrity,
+        },
+        {
+          name: "radio-module-kenwood-th-d74-1.11.1.zip",
+          browser_download_url:
+            "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v1.11.0/radio-module-kenwood-th-d74-1.11.1.zip",
+          digest: thD74OldIntegrity,
+        },
+      ],
+    },
+  ];
+
   const fetchImpl = async (url) => {
-    if (String(url).endsWith("/releases/latest")) {
-      return { ok: true, json: async () => release };
+    const href = String(url);
+    if (href.includes("/releases?")) {
+      return { ok: true, json: async () => releases };
     }
-    if (String(url) === downloadUrl) {
-      return {
-        ok: true,
-        arrayBuffer: async () => zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength),
-      };
+    if (href.endsWith("radio-module-kenwood-th-f6-1.11.0.zip")) {
+      return { ok: true, arrayBuffer: async () => bufferSlice(thF6Zip) };
     }
-    throw new Error(`unexpected URL ${url}`);
+    if (href.endsWith("radio-module-kenwood-th-d74-1.11.2.zip")) {
+      return { ok: true, arrayBuffer: async () => bufferSlice(thD74NewZip) };
+    }
+    throw new Error(`unexpected URL ${href}`);
   };
+
   const catalog = {
-    schemaVersion: 1,
+    schemaVersion: 3,
     modules: [
-      {
-        id: "baofeng",
-        package: "@springfield/radio-module-baofeng",
-        manufacturer: "Baofeng",
-        description: "Baofeng UV-5R series (UV-5R and UV-5RE Plus share one config)",
-        version: "3.6.1",
-        radios: [{ modelId: "baofeng-uv5r", name: "Baofeng UV-5R", config: "configs/baofeng-uv5r.json" }],
-        supportedRadios: ["baofeng-uv5r"],
-        minApiVersion: "17.3.0",
-        downloadUrl:
-          "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-3.6.1.zip",
-        integrity: "sha256:2020c229dc81230f8305464e2eb327e508e21b41ea4651f1a60b9f18672da9ce",
-      },
+      kenwoodCatalogSeed("kenwood-th-f6", "1.10.0"),
+      kenwoodCatalogSeed("kenwood-th-d74", "1.10.0"),
     ],
   };
 
   const result = await syncCatalog(catalog, { fetchImpl });
-  assert.equal(result.changes[0].action, "updated");
-  assert.equal(result.catalog.modules[0].version, "3.7.2");
-  assert.equal(result.catalog.modules[0].downloadUrl, downloadUrl);
-  assert.equal(result.catalog.modules[0].integrity, integrity);
+  assert.equal(result.catalog.modules[0].version, "1.11.0");
+  assert.equal(result.catalog.modules[0].integrity, thF6Integrity);
+  assert.equal(result.catalog.modules[1].version, "1.11.2");
+  assert.equal(result.catalog.modules[1].integrity, thD74NewIntegrity);
   validateCatalog(result.catalog, schema);
 });
 
-test("syncCatalog refuses a draft returned as the latest release", async () => {
-  const catalog = {
-    schemaVersion: 1,
-    modules: [
-      {
-        id: "baofeng",
-        version: "3.6.1",
-        downloadUrl:
-          "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-3.6.1.zip",
-      },
-    ],
-  };
+test("syncCatalog leaves an entry unchanged when no per-radio asset exists yet", async () => {
   const fetchImpl = async () => ({
     ok: true,
-    json: async () => ({ tag_name: "v3.7.1", draft: true, prerelease: false, assets: [] }),
+    json: async () => [
+      {
+        tag_name: "v1.11.6",
+        draft: false,
+        prerelease: false,
+        assets: [{ name: "radio-module-kenwood-1.11.6.zip", browser_download_url: "https://example.com" }],
+      },
+    ],
   });
 
-  await assert.rejects(() => syncCatalog(catalog, { fetchImpl }), /not a published release/);
+  const catalog = {
+    schemaVersion: 3,
+    modules: [kenwoodCatalogSeed("kenwood-th-f6", "1.11.0")],
+  };
+
+  const result = await syncCatalog(catalog, { fetchImpl });
+  assert.equal(result.changes[0].action, "unchanged");
+  assert.equal(result.changes[0].reason, "no published per-radio asset");
+  assert.deepEqual(result.catalog.modules[0], catalog.modules[0]);
 });
 
-test("formatCatalog is valid JSON and matches the catalog schema", () => {
+test("formatCatalog is valid JSON and matches the catalog schema and registry", () => {
   const catalog = JSON.parse(readFileSync(new URL("../catalog.json", import.meta.url), "utf8"));
   const formatted = formatCatalog(catalog);
   const parsed = JSON.parse(formatted);
   validateCatalog(parsed, schema);
+  parseModuleCatalog(formatted);
   assert.equal(formatted, formatCatalog(parsed));
 });
 
@@ -282,35 +397,39 @@ test("dry-run does not write the catalog", async () => {
   const zip = storedZip([
     {
       name: "configs/baofeng-uv5r.json",
-      content: Buffer.from(JSON.stringify({ id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" } })),
+      content: Buffer.from(
+        JSON.stringify({
+          id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" },
+          version: "3.7.0",
+          minApiVersion: "18.0.1",
+        }),
+      ),
     },
   ]);
   const integrity = sha256Integrity(zip);
   const downloadUrl =
-    "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-3.6.1.zip";
-  const release = {
-    tag_name: "v3.6.1",
-    draft: false,
-    prerelease: false,
-    assets: [
-      {
-        name: "radio-module-baofeng-3.6.1.zip",
-        label: "Radio module JSON package (zip)",
-        browser_download_url: downloadUrl,
-        digest: integrity,
-      },
-    ],
-  };
+    "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.0/radio-module-baofeng-uv5r-3.7.0.zip";
+  const releases = [
+    {
+      tag_name: "v3.7.0",
+      draft: false,
+      prerelease: false,
+      assets: [
+        {
+          name: "radio-module-baofeng-uv5r-3.7.0.zip",
+          browser_download_url: downloadUrl,
+          digest: integrity,
+        },
+      ],
+    },
+  ];
   const fetchImpl = async (url) => {
     const href = String(url);
-    if (href.endsWith("/releases/latest")) {
-      return { ok: true, json: async () => release };
+    if (href.includes("/releases?")) {
+      return { ok: true, json: async () => releases };
     }
     if (href === downloadUrl) {
-      return {
-        ok: true,
-        arrayBuffer: async () => zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength),
-      };
+      return { ok: true, arrayBuffer: async () => bufferSlice(zip) };
     }
     throw new Error(`unexpected URL ${href}`);
   };
@@ -318,21 +437,19 @@ test("dry-run does not write the catalog", async () => {
   const directory = mkdtempSync(join(tmpdir(), "catalog-dry-"));
   const catalogPath = join(directory, "catalog.json");
   const original = {
-    schemaVersion: 1,
+    schemaVersion: 3,
     modules: [
       {
-        id: "baofeng",
-        package: "@springfield/radio-module-baofeng",
+        id: "baofeng-uv5r",
+        package: "@springfield/radio-module-baofeng-uv5r",
         manufacturer: "Baofeng",
         description: "Baofeng UV-5R series (UV-5R and UV-5RE Plus share one config)",
+        name: "Baofeng UV-5R",
         version: "9.9.9",
-        radios: [
-          { modelId: "baofeng-uv5r", name: "Baofeng UV-5R", config: "configs/baofeng-uv5r.json" },
-        ],
-        supportedRadios: ["baofeng-uv5r"],
-        minApiVersion: "17.3.0",
+        config: "configs/baofeng-uv5r.json",
+        minApiVersion: "18.0.1",
         downloadUrl:
-          "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v9.9.9/radio-module-baofeng-9.9.9.zip",
+          "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v9.9.9/radio-module-baofeng-uv5r-9.9.9.zip",
         integrity: "sha256:2020c229dc81230f8305464e2eb327e508e21b41ea4651f1a60b9f18672da9ce",
       },
     ],
@@ -361,8 +478,8 @@ test("dry-run does not write the catalog", async () => {
     assert.equal(report.dryRun, true);
     assert.equal(report.wrote, false);
     assert.equal(report.changes[0].action, "updated");
-    assert.equal(report.changes[0].to, "3.6.1");
-    assert.match(output, /baofeng: updated 9\.9\.9 -> 3\.6\.1/);
+    assert.equal(report.changes[0].to, "3.7.0");
+    assert.match(output, /baofeng-uv5r: updated 9\.9\.9 -> 3\.7\.0/);
     assert.match(output, /dry-run/);
     assert.equal(readFileSync(catalogPath, "utf8"), originalText);
   } finally {
@@ -370,6 +487,39 @@ test("dry-run does not write the catalog", async () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+function kenwoodCatalogSeed(modelId, version) {
+  return {
+    id: modelId,
+    package: `@springfield/radio-module-${modelId}`,
+    manufacturer: "Kenwood",
+    name: `Kenwood ${modelId}`,
+    version,
+    config: `configs/${modelId}.json`,
+    minApiVersion: "18.0.1",
+    downloadUrl: `https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v0.0.0/radio-module-${modelId}-${version}.zip`,
+    integrity: "sha256:2020c229dc81230f8305464e2eb327e508e21b41ea4651f1a60b9f18672da9ce",
+  };
+}
+
+function kenwoodZip(modelId, version, name) {
+  return storedZip([
+    {
+      name: `configs/${modelId}.json`,
+      content: Buffer.from(
+        JSON.stringify({
+          id: { model: modelId, name },
+          version,
+          minApiVersion: "18.0.1",
+        }),
+      ),
+    },
+  ]);
+}
+
+function bufferSlice(buffer) {
+  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+}
 
 function storedZip(files) {
   const locals = [];
@@ -430,7 +580,6 @@ function storedZip(files) {
   end.writeUInt32LE(offset, 16);
   end.writeUInt16LE(0, 20);
 
-  // Touch deflateRawSync so a stored-only fixture still imports the same zlib surface the reader uses.
   deflateRawSync(Buffer.from("catalog"));
   return Buffer.concat([...locals, centralDirectory, end]);
 }
