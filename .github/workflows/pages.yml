@@ -17,12 +17,28 @@ concurrency:
 
 jobs:
   deploy:
+    # workflow_dispatch on the schema v3 branch must not publish that catalog.
+    if: github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Reject a catalog that is not publishable
+        run: |
+          npm ci
+          node --input-type=module -e "
+          import { readFileSync } from 'node:fs';
+          import { validateCatalog } from './scripts/update-catalog.mjs';
+          const schema = JSON.parse(readFileSync('catalog.schema.json', 'utf8'));
+          const catalog = JSON.parse(readFileSync('catalog.json', 'utf8'));
+          validateCatalog(catalog, schema);
+          "
+          rm -rf node_modules
       - uses: actions/configure-pages@v5
         with:
           enablement: true

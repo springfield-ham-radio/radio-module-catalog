@@ -73,8 +73,8 @@
           },
           "integrity": {
             "type": "string",
-            "pattern": "^sha256:[a-fA-F0-9]{64}$",
-            "description": "SHA-256 of the zip as sha256:<hex>."
+            "pattern": "^sha256:(?!([a-fA-F0-9])\\1{63}$)[a-fA-F0-9]{64}$",
+            "description": "SHA-256 of the published zip as sha256:<hex>. Repeated-nibble digests (including sha256:000…0) are placeholders and are rejected."
           }
         }
       }

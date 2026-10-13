@@ -10,7 +10,9 @@
  * radio-module-<id>-<semver>.zip, picks the highest stable semver, downloads the zip,
  * verifies the release digest, and sets version, name, config, minApiVersion, downloadUrl,
  * and integrity from that asset. package, manufacturer, and description are preserved
- * unless the config display name changes.
+ * unless the config display name changes. Drafts and prereleases are ignored. A model with
+ * no matching asset keeps a previously verified entry; a placeholder integrity is rejected
+ * so it cannot be merged or published.
  */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -140,6 +142,15 @@ export function sha256Integrity(buffer) {
   return `sha256:${digest}`;
 }
 
+/** True for digests that were never computed from a zip (sha256:000…0 and any repeated nibble). */
+export function isPlaceholderIntegrity(integrity) {
+  const match = /^sha256:([a-f0-9]{64})$/i.exec(String(integrity ?? "").trim());
+  if (!match) {
+    return false;
+  }
+  return /^(.)\1{63}$/i.test(match[1]);
+}
+
 export function readZipEntries(buffer) {
   const data = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
   const endOfCentralDirectory = findEndOfCentralDirectory(data);
@@ -264,10 +275,15 @@ export function applyVerifiedAsset(moduleEntry, selection, zipBuffer) {
   }
 
   const integrity = sha256Integrity(zipBuffer);
+  if (isPlaceholderIntegrity(integrity)) {
+    throw new Error(`${moduleEntry.id} zip integrity is a placeholder and must not be published`);
+  }
   if (typeof asset.digest !== "string" || asset.digest.length === 0) {
     throw new Error(`${moduleEntry.id} release ${release.tag_name} zip has no checksum to verify`);
   }
-  if (asset.digest.toLowerCase() !== integrity.toLowerCase()) {
+  const digest = asset.digest.trim().toLowerCase();
+  const normalizedDigest = digest.startsWith("sha256:") ? digest : `sha256:${digest}`;
+  if (normalizedDigest !== integrity.toLowerCase()) {
     throw new Error(
       `${moduleEntry.id} zip ${integrity} does not match release asset digest ${asset.digest}`,
     );
@@ -326,8 +342,17 @@ export function formatCatalog(catalog) {
 export function validateCatalog(catalog, schema) {
   const errors = [];
   checkSchema(catalog, schema, "catalog", errors);
+  if (catalog && Array.isArray(catalog.modules)) {
+    catalog.modules.forEach((moduleEntry, index) => {
+      if (moduleEntry && isPlaceholderIntegrity(moduleEntry.integrity)) {
+        errors.push(
+          `catalog.modules[${index}].integrity is a placeholder and must not be published (${moduleEntry.id || "unknown"})`,
+        );
+      }
+    });
+  }
   if (errors.length > 0) {
-    throw new Error(`catalog.json does not match catalog.schema.json:\n${errors.join("\n")}`);
+    throw new Error(`catalog.json is not publishable:\n${errors.join("\n")}`);
   }
   parseModuleCatalog(JSON.stringify(catalog));
 }
@@ -484,6 +509,11 @@ export async function syncCatalog(catalog, { token, fetchImpl } = {}) {
 
     const selection = selectHighestPerRadioAsset(releases, moduleEntry.id);
     if (!selection) {
+      if (isPlaceholderIntegrity(moduleEntry.integrity)) {
+        throw new Error(
+          `${moduleEntry.id} has no published radio-module-${moduleEntry.id}-<semver>.zip and its integrity is a placeholder`,
+        );
+      }
       modules.push(moduleEntry);
       changes.push({
         id: moduleEntry.id,

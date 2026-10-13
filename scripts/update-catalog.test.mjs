@@ -15,6 +15,7 @@ import {
   main,
   parseGithubRepo,
   parsePerRadioAssetName,
+  isPlaceholderIntegrity,
   selectHighestPerRadioAsset,
   sha256Integrity,
   syncCatalog,
@@ -360,7 +361,22 @@ test("syncCatalog resolves Kenwood radios when the latest release only ships one
   validateCatalog(result.catalog, schema);
 });
 
-test("syncCatalog leaves an entry unchanged when no per-radio asset exists yet", async () => {
+test("validateCatalog rejects placeholder integrity", () => {
+  const catalog = {
+    schemaVersion: 3,
+    modules: [
+      {
+        ...kenwoodCatalogSeed("kenwood-th-f6", "1.11.0"),
+        integrity: `sha256:${"0".repeat(64)}`,
+      },
+    ],
+  };
+
+  assert.equal(isPlaceholderIntegrity(catalog.modules[0].integrity), true);
+  assert.throws(() => validateCatalog(catalog, schema), /placeholder/);
+});
+
+test("syncCatalog leaves a verified entry unchanged when no per-radio asset exists yet", async () => {
   const fetchImpl = async () => ({
     ok: true,
     json: async () => [
@@ -382,15 +398,59 @@ test("syncCatalog leaves an entry unchanged when no per-radio asset exists yet",
   assert.equal(result.changes[0].action, "unchanged");
   assert.equal(result.changes[0].reason, "no published per-radio asset");
   assert.deepEqual(result.catalog.modules[0], catalog.modules[0]);
+  validateCatalog(result.catalog, schema);
 });
 
-test("formatCatalog is valid JSON and matches the catalog schema and registry", () => {
+test("syncCatalog fails when a model has no per-radio asset and a placeholder integrity", async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => [
+      {
+        tag_name: "v3.7.2",
+        draft: false,
+        prerelease: false,
+        assets: [{ name: "radio-module-baofeng-3.7.2.zip", browser_download_url: "https://example.com/old.zip" }],
+      },
+    ],
+  });
+  const catalog = {
+    schemaVersion: 3,
+    modules: [
+      {
+        ...kenwoodCatalogSeed("baofeng-uv5r", "3.7.0"),
+        package: "@springfield/radio-module-baofeng-uv5r",
+        manufacturer: "Baofeng",
+        name: "Baofeng UV-5R",
+        config: "configs/baofeng-uv5r.json",
+        downloadUrl:
+          "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.0/radio-module-baofeng-uv5r-3.7.0.zip",
+        integrity: `sha256:${"0".repeat(64)}`,
+      },
+    ],
+  };
+
+  await assert.rejects(() => syncCatalog(catalog, { fetchImpl }), /placeholder/);
+});
+
+test("formatCatalog round-trips catalog.json", () => {
   const catalog = JSON.parse(readFileSync(new URL("../catalog.json", import.meta.url), "utf8"));
   const formatted = formatCatalog(catalog);
   const parsed = JSON.parse(formatted);
-  validateCatalog(parsed, schema);
-  parseModuleCatalog(formatted);
   assert.equal(formatted, formatCatalog(parsed));
+  assert.equal(parsed.schemaVersion, 3);
+});
+
+test("catalog.json must not ship placeholder integrity", () => {
+  const catalog = JSON.parse(readFileSync(new URL("../catalog.json", import.meta.url), "utf8"));
+  for (const moduleEntry of catalog.modules) {
+    assert.equal(
+      isPlaceholderIntegrity(moduleEntry.integrity),
+      false,
+      `${moduleEntry.id} integrity is a placeholder and must not be merged or served`,
+    );
+  }
+  validateCatalog(catalog, schema);
+  parseModuleCatalog(JSON.stringify(catalog));
 });
 
 test("dry-run does not write the catalog", async () => {
