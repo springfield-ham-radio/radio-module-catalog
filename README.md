@@ -2,7 +2,7 @@
 
 Official index of installable radio modules for the HamBench desktop app.
 
-The app fetches [`catalog.json`](./catalog.json) (served via GitHub Pages) and installs only modules listed here. Each entry points at a JSON-only zip attached to a GitHub Release of the corresponding `radio-module-*` repository. The zip is one manufacturer package; `radios` lists each `configs/*.json` file inside that zip.
+The app fetches [`catalog.json`](./catalog.json) (served via GitHub Pages) and installs only modules listed here. Each entry is one radio: a JSON-only zip named `radio-module-<modelId>-<version>.zip` on a GitHub Release of the corresponding manufacturer `radio-module-*` repository.
 
 ## Update workflow
 
@@ -14,7 +14,7 @@ It runs on three triggers:
 - `workflow_dispatch` from the Actions tab
 - `repository_dispatch` with event type `module-released`
 
-The job uses the workflow `GITHUB_TOKEN` with `contents: write` and `pull-requests: write`. It does not use any other secrets. `node scripts/update-catalog.mjs` reads each module `downloadUrl`, requests that repository’s latest published GitHub release, and rejects drafts and prereleases. It downloads the module zip, hashes those bytes, and continues only when the hash matches the release asset digest. It then sets `version`, `downloadUrl`, `integrity`, `radios`, and `supportedRadios` from that asset, including when the published version is newer than the catalog pin (for example Baofeng 3.7.x after that zip is published). `radios` comes from `configs/*.json` inside the zip (`id.model`, `id.name`, and the config path). Manufacturer, description, package name, and `minApiVersion` stay as they are in the catalog.
+The job uses the workflow `GITHUB_TOKEN` with `contents: write` and `pull-requests: write`. It does not use any other secrets. `node scripts/update-catalog.mjs` reads each entry’s `downloadUrl` to find the manufacturer repository, lists every GitHub release, and skips drafts and prereleases. It considers assets named `radio-module-<id>-<semver>.zip`, picks the highest stable semver per radio, downloads that zip, and continues only when the SHA-256 of those bytes matches the release asset digest. It then sets `version`, `name`, `config`, `minApiVersion`, `downloadUrl`, and `integrity` from the zip’s single `configs/*.json`. `package`, `manufacturer`, and `description` stay as they are in the catalog unless the config display name changes. When no stable release carries that radio’s zip, a previously verified entry is left unchanged. Placeholder integrity values (every hex digit the same, including `sha256:000…0`) are rejected, so an entry that has never been verified fails the sync and cannot be published. The sync job runs only on `main` and will not open a pull request that changes `schemaVersion`.
 
 `main` is protected, so the workflow does not push the catalog there. When `catalog.json` changes, it force-pushes branch `chore/sync-module-releases` and opens a pull request, or updates the open pull request for that branch. Merging the pull request publishes the catalog through the GitHub Pages workflow.
 
@@ -24,7 +24,7 @@ Check the sync locally without writing the file:
 node scripts/update-catalog.mjs --dry-run
 ```
 
-`node --test scripts/update-catalog.test.mjs` covers release selection, zip reading, schema validation, and dry-run.
+`npm test` covers per-radio release selection across tags, zip reading, schema and `@springfield/ham-radio-registry` validation, and dry-run.
 
 ### Optional trigger from a module repository
 
@@ -43,15 +43,15 @@ The payload is optional. The catalog workflow refreshes every module listed in `
 ### Manual edit
 
 1. Publish a new `radio-module-*` release (semantic-release attaches the zip asset).
-2. Run `yarn pack:release` in the module repo. It prints `integrity` and writes `dist-release/catalog-module.json` from `configs/*.json`.
-3. Copy that object into `catalog.json` `modules` (or update `version`, `downloadUrl`, `integrity`, and `radios` to match).
+2. Run `yarn pack:release` in the module repo. It writes `dist-release/catalog-entries.json` (schema version 3) and per-radio zips.
+3. Copy or sync those entries into `catalog.json` `modules` (or run `node scripts/update-catalog.mjs` after the release publishes).
 4. Open a pull request to `main`. GitHub Pages serves the update after the pull request merges.
 
 Do not invent radio ids. If a model shares a config (for example UV-5R and UV-5RE Plus), list that config once.
 
 ## Schema
 
-See [`catalog.schema.json`](./catalog.schema.json). Keep `schemaVersion` at `1` until the app ships a newer format. `supportedRadios` must be the same ids as `radios[].modelId`.
+See [`catalog.schema.json`](./catalog.schema.json). Published catalogs use `schemaVersion` `3` (one entry per radio). HamBench builds on `@springfield/ham-radio-registry` 2.x read this format.
 
 ## Local preview
 

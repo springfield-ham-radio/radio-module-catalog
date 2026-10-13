@@ -29,12 +29,17 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install test dependencies
+        run: npm ci
+
       - name: Test catalog sync
-        run: node --test scripts/update-catalog.test.mjs
+        run: npm test
 
   sync:
     needs: test
-    if: github.event_name != 'pull_request'
+    # Only the default branch. A dispatch on the schema v3 pull request must not
+    # force-push chore/sync-module-releases and open a pull request into main.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +47,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Install sync dependencies
+        run: npm ci
 
       - name: Refresh catalog.json from published module releases
         env:
@@ -55,6 +63,15 @@ jobs:
           if git diff --quiet -- catalog.json; then
             echo "Catalog already matches the latest published module releases."
             exit 0
+          fi
+
+          git fetch origin main
+          base_schema="$(git show origin/main:catalog.json | jq -r '.schemaVersion')"
+          head_schema="$(jq -r '.schemaVersion' catalog.json)"
+          if [ "$base_schema" != "$head_schema" ]; then
+            echo "Refusing to open a sync pull request that changes schemaVersion ${base_schema} -> ${head_schema}."
+            echo "Schema version 3 ships with the HamBench release, not the hourly catalog sync."
+            exit 1
           fi
 
           branch="chore/sync-module-releases"
