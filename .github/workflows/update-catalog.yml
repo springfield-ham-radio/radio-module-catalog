@@ -119,8 +119,11 @@ jobs:
             pr_number="${pr_url##*/}"
           fi
 
-          echo "Enabling auto-merge for catalog sync pull request #${pr_number} (squash, delete branch)."
-          gh pr merge "$pr_number" --auto --squash --delete-branch
+          echo "Merging catalog sync pull request #${pr_number} (squash, delete branch)."
+          if ! gh pr merge "$pr_number" --auto --squash --delete-branch; then
+            echo "Auto-merge failed (mergeable PRs with no required checks often need a direct merge); retrying without --auto."
+            gh pr merge "$pr_number" --squash --delete-branch
+          fi
 
           echo "Waiting for pull request #${pr_number} to merge..."
           state=""
