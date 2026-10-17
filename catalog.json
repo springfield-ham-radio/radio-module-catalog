@@ -6,22 +6,22 @@
       "package": "@springfield/radio-module-kenwood-th-f6",
       "manufacturer": "Kenwood",
       "name": "Kenwood TH-F6",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "config": "configs/kenwood-th-f6.json",
       "minApiVersion": "18.0.1",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.0.0/radio-module-kenwood-th-f6-1.11.0.zip",
-      "integrity": "sha256:838e5dd215c9d6e7458f8f9399fd0a1acde9875c4c57243e16980c9fa2bc1e15"
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.2.0/radio-module-kenwood-th-f6-1.12.0.zip",
+      "integrity": "sha256:ca4076368bc9d9b99302b831357d69400bb32aeed50b157a74445a092e26d0f8"
     },
     {
       "id": "kenwood-th-d74",
       "package": "@springfield/radio-module-kenwood-th-d74",
       "manufacturer": "Kenwood",
       "name": "Kenwood TH-D74",
-      "version": "1.11.1",
+      "version": "1.12.0",
       "config": "configs/kenwood-th-d74.json",
       "minApiVersion": "18.0.1",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.0.0/radio-module-kenwood-th-d74-1.11.1.zip",
-      "integrity": "sha256:596ed3c163d959f29e669b2b9364ab101245738959edcd666628663ef153c7af"
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.2.0/radio-module-kenwood-th-d74-1.12.0.zip",
+      "integrity": "sha256:dae172a7e438c20339fd9a5c14f79d978dfe10e138514476d516f18c73845028"
     },
     {
       "id": "kenwood-tm-d710a",
