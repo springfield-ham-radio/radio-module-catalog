@@ -12,6 +12,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 concurrency:
   group: update-module-catalog
@@ -56,7 +57,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/update-catalog.mjs --report /tmp/sync-report.json
 
-      - name: Open or update pull request
+      - name: Validate refreshed catalog
+        run: |
+          node --input-type=module -e "
+          import { readFileSync } from 'node:fs';
+          import { validateCatalog } from './scripts/update-catalog.mjs';
+          const schema = JSON.parse(readFileSync('catalog.schema.json', 'utf8'));
+          const catalog = JSON.parse(readFileSync('catalog.json', 'utf8'));
+          validateCatalog(catalog, schema);
+          "
+
+      - name: Open, auto-merge, and deploy catalog sync pull request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -93,7 +104,7 @@ jobs:
               lines.append(f"- `{change['id']}`: {change['action']} {change['from']} -> {change['to']}")
           lines.extend([
               "",
-              "The workflow uses GITHUB_TOKEN only. Main is protected, so this branch needs a pull request.",
+              "Opened by the Update module catalog workflow. It enables auto-merge (squash, delete branch) after validation in the same workflow run.",
           ])
           print("\n".join(lines))
           PY
@@ -102,6 +113,32 @@ jobs:
           existing="$(gh pr list --base main --head "$branch" --state open --json number --jq '.[0].number // empty')"
           if [ -n "$existing" ]; then
             gh pr edit "$existing" --title "chore: sync radio module releases" --body "$body"
+            pr_number="$existing"
           else
-            gh pr create --base main --head "$branch" --title "chore: sync radio module releases" --body "$body"
+            pr_url="$(gh pr create --base main --head "$branch" --title "chore: sync radio module releases" --body "$body")"
+            pr_number="${pr_url##*/}"
           fi
+
+          echo "Enabling auto-merge for catalog sync pull request #${pr_number} (squash, delete branch)."
+          gh pr merge "$pr_number" --auto --squash --delete-branch
+
+          echo "Waiting for pull request #${pr_number} to merge..."
+          state=""
+          for _ in $(seq 1 60); do
+            state="$(gh pr view "$pr_number" --json state --jq '.state')"
+            if [ "$state" = "MERGED" ]; then
+              break
+            fi
+            if [ "$state" = "CLOSED" ]; then
+              echo "Catalog sync pull request #${pr_number} closed without merging."
+              exit 1
+            fi
+            sleep 10
+          done
+          if [ "$state" != "MERGED" ]; then
+            echo "Timed out waiting for catalog sync pull request #${pr_number} to merge."
+            exit 1
+          fi
+
+          echo "Dispatching Deploy catalog on main (GITHUB_TOKEN merges do not run push workflows)."
+          gh workflow run "Deploy catalog" --ref main
