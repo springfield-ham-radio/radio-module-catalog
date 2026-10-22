@@ -6,11 +6,11 @@
       "package": "@springfield/radio-module-kenwood-th-f6",
       "manufacturer": "Kenwood",
       "name": "Kenwood TH-F6",
-      "version": "1.13.0",
+      "version": "1.14.0",
       "config": "configs/kenwood-th-f6.json",
       "minApiVersion": "18.0.1",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.3.2/radio-module-kenwood-th-f6-1.13.0.zip",
-      "integrity": "sha256:56cecf3c22e3822d4555a0e77123d0515b715865c5e239209051381e1d17a934"
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.4.0/radio-module-kenwood-th-f6-1.14.0.zip",
+      "integrity": "sha256:405ec354b59a0ff756e117124cb5ce6eb1b7815d0199e3a8a07ec15ba3bb43c7"
     },
     {
       "id": "kenwood-th-d74",
