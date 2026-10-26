@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://springfield-ham-radio.github.io/radio-module-catalog/catalog.schema.json",
   "title": "Springfield Radio Module Catalog",
-  "description": "Official index of installable per-radio module packages for the Ham Radio desktop app (ADR 0009 schema version 3). Each entry is one radio zip on GitHub Releases.",
+  "description": "Index of installable per-radio module packages for the Ham Radio desktop app (ADR 0009 schema version 3, ADR 0012 trust fields). Each entry is one radio zip on GitHub Releases. schemaVersion stays 3 so @springfield/ham-radio-registry 2.x still parses the document; trust fields are additive and ignored by that registry.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "modules"],
@@ -10,7 +10,7 @@
     "schemaVersion": {
       "type": "integer",
       "const": 3,
-      "description": "Catalog format version. The app rejects unsupported versions."
+      "description": "Catalog format version. The app rejects unsupported versions. Trust fields did not bump this value."
     },
     "modules": {
       "type": "array",
@@ -28,6 +28,15 @@
           "downloadUrl",
           "integrity"
         ],
+        "if": {
+          "properties": {
+            "tier": { "const": "community" }
+          },
+          "required": ["tier"]
+        },
+        "then": {
+          "required": ["publisher"]
+        },
         "properties": {
           "id": {
             "type": "string",
@@ -37,7 +46,7 @@
           "package": {
             "type": "string",
             "pattern": "^@springfield/radio-module-[a-z0-9]+(?:-[a-z0-9]+)+$",
-            "description": "Logical package name for developers (e.g. @springfield/radio-module-kenwood-th-f6)."
+            "description": "Logical package name for developers (e.g. @springfield/radio-module-kenwood-th-f6). Not an npm install coordinate. Registry 2.x requires this shape for every tier."
           },
           "manufacturer": {
             "type": "string",
@@ -50,6 +59,18 @@
           },
           "description": {
             "type": "string"
+          },
+          "tier": {
+            "type": "string",
+            "enum": ["official", "community"],
+            "default": "official",
+            "description": "Trust tier. official means the zip is published by springfield-ham-radio. community means a reviewed outside driver, shown as Community, by <publisher>. Omitted means official. Unverified is a file install and is not a catalog tier."
+          },
+          "publisher": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^.*\\S.*$",
+            "description": "Display name in Community, by <publisher>. Required when tier is community. Optional for official. This is not a GitHub login or an npm scope."
           },
           "version": {
             "type": "string",
@@ -69,12 +90,32 @@
           "downloadUrl": {
             "type": "string",
             "format": "uri",
-            "description": "HTTPS URL of the per-radio JSON zip on GitHub Releases."
+            "description": "HTTPS GitHub Releases URL of the per-radio JSON zip. Official entries are assets from springfield-ham-radio. Community entries are assets from another owner, pinned to that release until a reviewed pull request."
           },
           "integrity": {
             "type": "string",
             "pattern": "^sha256:(?!([a-fA-F0-9])\\1{63}$)[a-fA-F0-9]{64}$",
             "description": "SHA-256 of the published zip as sha256:<hex>. Repeated-nibble digests (including sha256:000…0) are placeholders and are rejected."
+          },
+          "deprecated": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Present when the driver is broken or the maintainer has not responded for about 90 days. The entry stays in the catalog until a later pull request removes it. Omit the property when the driver is not deprecated.",
+            "required": ["reason", "date"],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^.*\\S.*$",
+                "description": "Why the entry is deprecated."
+              },
+              "date": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "description": "Calendar date (YYYY-MM-DD) when the entry was marked deprecated."
+              }
+            }
           }
         }
       }

@@ -36,6 +36,9 @@ jobs:
       - name: Test catalog sync
         run: npm test
 
+      - name: Validate catalog trust fields and community pins
+        run: node scripts/verify-community-pins.mjs
+
   sync:
     needs: test
     # Only the default branch. A dispatch on the schema v3 pull request must not
