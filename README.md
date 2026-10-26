@@ -14,7 +14,7 @@ It runs on three triggers:
 - `workflow_dispatch` from the Actions tab
 - `repository_dispatch` with event type `module-released`
 
-The job uses the workflow `GITHUB_TOKEN` with `contents: write` and `pull-requests: write`. It does not use any other secrets. `node scripts/update-catalog.mjs` reads each entry’s `downloadUrl` to find the manufacturer repository, lists every GitHub release, and skips drafts and prereleases. It considers assets named `radio-module-<id>-<semver>.zip`, picks the highest stable semver per radio, downloads that zip, and continues only when the SHA-256 of those bytes matches the release asset digest. It then sets `version`, `name`, `config`, `minApiVersion`, `downloadUrl`, and `integrity` from the zip’s single `configs/*.json`. `package`, `manufacturer`, and `description` stay as they are in the catalog unless the config display name changes. When no stable release carries that radio’s zip, a previously verified entry is left unchanged. Placeholder integrity values (every hex digit the same, including `sha256:000…0`) are rejected, so an entry that has never been verified fails the sync and cannot be published. The sync job runs only on `main` and will not open a pull request that changes `schemaVersion`.
+The job uses the workflow `GITHUB_TOKEN` with `contents: write` and `pull-requests: write`. It does not use any other secrets. `node scripts/update-catalog.mjs` reads each entry’s `downloadUrl` to find the manufacturer repository, lists every GitHub release, and skips drafts and prereleases. It considers assets named `radio-module-<id>-<semver>.zip`, picks the highest stable semver per radio, downloads that zip, and continues only when the SHA-256 of those bytes matches the release asset digest. It then sets `version`, `name`, `config`, `minApiVersion`, `downloadUrl`, and `integrity` from the zip’s single `configs/*.json`. `package`, `manufacturer`, `description`, `tier`, `publisher`, and `deprecated` stay as they are in the catalog. An entry with `tier` `community` is pinned to the reviewed release: the sync does not download a newer zip and does not change `version`, `downloadUrl`, or `integrity`. A newer community release is listed only by a reviewed pull request ([CONTRIBUTING.md](./CONTRIBUTING.md)). When no stable release carries an official radio’s zip, a previously verified entry is left unchanged. Placeholder integrity values (every hex digit the same, including `sha256:000…0`) are rejected, so an entry that has never been verified fails the sync and cannot be published. The sync job runs only on `main` and will not open a pull request that changes `schemaVersion`.
 
 `main` is protected, so the workflow does not push the catalog there. When `catalog.json` changes, it force-pushes branch `chore/sync-module-releases` and opens a pull request, or updates the open pull request for that branch. Merging the pull request publishes the catalog through the GitHub Pages workflow.
 
@@ -38,7 +38,7 @@ curl -sS -X POST \
   -d '{"event_type":"module-released"}'
 ```
 
-The payload is optional. The catalog workflow refreshes every module listed in `catalog.json`.
+The payload is optional. The catalog workflow refreshes every official module listed in `catalog.json`. Community entries stay pinned.
 
 ### Manual edit
 
@@ -49,9 +49,26 @@ The payload is optional. The catalog workflow refreshes every module listed in `
 
 Do not invent radio ids. If a model shares a config (for example UV-5R and UV-5RE Plus), list that config once.
 
+A driver published outside `springfield-ham-radio` is not added by this sync. The listing pull request is described in [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+## Trust labels
+
+[ADR 0012](https://github.com/springfield-ham-radio/ham-radio-docs/blob/main/docs/developer/adr/0012-community-drivers.md) gives each catalog entry a trust tier. `schemaVersion` stays `3`.
+
+| `tier` | Who publishes the zip | Label in HamBench |
+| --- | --- | --- |
+| `official` (default) | `springfield-ham-radio` | Official |
+| `community` | another GitHub owner, reviewed in a catalog pull request | Community, by `<publisher>` |
+
+`publisher` is the display name. It is required when `tier` is `community`. Every entry already in this catalog is `"tier": "official"` and has no `publisher`.
+
+`deprecated` is optional. When it is present it is `{ "reason": string, "date": "YYYY-MM-DD" }`. Set it when the driver is broken, or when a community maintainer has not responded for about 90 days. The entry stays listed until a later pull request removes it. A file install is **Unverified** in the app. That value is not a catalog tier.
+
+`@springfield/ham-radio-registry` 2.x still parses this document. It ignores `tier`, `publisher`, and `deprecated`. HamBench reads those fields from `catalog.json` when it shows the labels.
+
 ## Schema
 
-See [`catalog.schema.json`](./catalog.schema.json). Published catalogs use `schemaVersion` `3` (one entry per radio). HamBench builds on `@springfield/ham-radio-registry` 2.x read this format.
+See [`catalog.schema.json`](./catalog.schema.json). Published catalogs use `schemaVersion` `3` (one entry per radio). HamBench builds on `@springfield/ham-radio-registry` 2.x read this format, plus the trust fields above when that build understands them. `npm test` and `node scripts/verify-community-pins.mjs` validate the schema, the trust rules, and the SHA-256 of each community zip. Pull requests run both.
 
 ## Local preview
 

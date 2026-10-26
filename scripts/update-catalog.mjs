@@ -9,10 +9,11 @@
  * published release (drafts and prereleases are skipped), considers assets named
  * radio-module-<id>-<semver>.zip, picks the highest stable semver, downloads the zip,
  * verifies the release digest, and sets version, name, config, minApiVersion, downloadUrl,
- * and integrity from that asset. package, manufacturer, and description are preserved
- * unless the config display name changes. Drafts and prereleases are ignored. A model with
- * no matching asset keeps a previously verified entry; a placeholder integrity is rejected
- * so it cannot be merged or published.
+ * and integrity from that asset. package, manufacturer, description, tier, publisher, and
+ * deprecated stay as they are in the catalog. tier community is pinned to the reviewed
+ * release and is not moved to a newer zip. Drafts and prereleases are
+ * ignored. A model with no matching asset keeps a previously verified entry; a placeholder
+ * integrity is rejected so it cannot be merged or published.
  */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -318,6 +319,58 @@ export function applyVerifiedAsset(moduleEntry, selection, zipBuffer) {
   };
 }
 
+const MODULE_KEY_ORDER = [
+  "id",
+  "package",
+  "manufacturer",
+  "name",
+  "description",
+  "tier",
+  "publisher",
+  "version",
+  "config",
+  "minApiVersion",
+  "downloadUrl",
+  "integrity",
+  "deprecated",
+];
+
+const OFFICIAL_GITHUB_OWNER = "springfield-ham-radio";
+
+export function moduleTier(moduleEntry) {
+  return moduleEntry?.tier === "community" ? "community" : "official";
+}
+
+function orderedModuleKeys(moduleEntry) {
+  const keys = Object.keys(moduleEntry);
+  const ordered = MODULE_KEY_ORDER.filter((key) => keys.includes(key));
+  for (const key of keys) {
+    if (!ordered.includes(key)) {
+      ordered.push(key);
+    }
+  }
+  return ordered;
+}
+
+function catalogJsonValue(key, value) {
+  if (key === "deprecated" && value && typeof value === "object" && !Array.isArray(value)) {
+    const ordered = {};
+    if (Object.prototype.hasOwnProperty.call(value, "reason")) {
+      ordered.reason = value.reason;
+    }
+    if (Object.prototype.hasOwnProperty.call(value, "date")) {
+      ordered.date = value.date;
+    }
+    for (const child of Object.keys(value)) {
+      if (!Object.prototype.hasOwnProperty.call(ordered, child)) {
+        ordered[child] = value[child];
+      }
+    }
+    return JSON.stringify(ordered);
+  }
+  return JSON.stringify(value);
+}
+
 export function formatCatalog(catalog) {
   const lines = ["{"];
   lines.push(`  "schemaVersion": ${catalog.schemaVersion},`);
@@ -325,10 +378,10 @@ export function formatCatalog(catalog) {
 
   catalog.modules.forEach((moduleEntry, moduleIndex) => {
     lines.push("    {");
-    const keys = Object.keys(moduleEntry);
+    const keys = orderedModuleKeys(moduleEntry);
     keys.forEach((key, keyIndex) => {
       const comma = keyIndex === keys.length - 1 ? "" : ",";
-      lines.push(`      "${key}": ${JSON.stringify(moduleEntry[key])}${comma}`);
+      lines.push(`      "${key}": ${catalogJsonValue(key, moduleEntry[key])}${comma}`);
     });
     const moduleComma = moduleIndex === catalog.modules.length - 1 ? "" : ",";
     lines.push(`    }${moduleComma}`);
@@ -349,12 +402,75 @@ export function validateCatalog(catalog, schema) {
           `catalog.modules[${index}].integrity is a placeholder and must not be published (${moduleEntry.id || "unknown"})`,
         );
       }
+      assertReleaseOwnerMatchesTier(moduleEntry, index, errors);
     });
   }
   if (errors.length > 0) {
     throw new Error(`catalog.json is not publishable:\n${errors.join("\n")}`);
   }
   parseModuleCatalog(JSON.stringify(catalog));
+}
+
+function assertReleaseOwnerMatchesTier(moduleEntry, index, errors) {
+  if (!moduleEntry || typeof moduleEntry !== "object" || Array.isArray(moduleEntry)) {
+    return;
+  }
+  if (typeof moduleEntry.downloadUrl !== "string" || moduleEntry.downloadUrl.length === 0) {
+    return;
+  }
+
+  let owner;
+  try {
+    owner = parseGithubRepo(moduleEntry.downloadUrl).owner.toLowerCase();
+  } catch {
+    errors.push(
+      `catalog.modules[${index}].downloadUrl must be a GitHub Releases asset URL (${moduleEntry.id || "unknown"})`,
+    );
+    return;
+  }
+
+  const tier = moduleTier(moduleEntry);
+  if (tier === "official" && owner !== OFFICIAL_GITHUB_OWNER) {
+    errors.push(
+      `catalog.modules[${index}] tier official must be a GitHub release from ${OFFICIAL_GITHUB_OWNER} (${moduleEntry.id || "unknown"})`,
+    );
+  }
+  if (tier === "community" && owner === OFFICIAL_GITHUB_OWNER) {
+    errors.push(
+      `catalog.modules[${index}] tier community must be a GitHub release outside ${OFFICIAL_GITHUB_OWNER} (${moduleEntry.id || "unknown"})`,
+    );
+  }
+}
+
+/**
+ * Download each community zip and require its SHA-256 to match integrity.
+ * Official entries are checked by the release sync, not here.
+ */
+export async function verifyCommunityPins(catalog, fetchImpl = fetch) {
+  const errors = [];
+  const modules = Array.isArray(catalog?.modules) ? catalog.modules : [];
+
+  for (let index = 0; index < modules.length; index += 1) {
+    const moduleEntry = modules[index];
+    if (!moduleEntry || moduleEntry.tier !== "community") {
+      continue;
+    }
+    const label = moduleEntry.id || "unknown";
+    try {
+      const zipBuffer = await downloadZip(moduleEntry.downloadUrl, fetchImpl);
+      const integrity = sha256Integrity(zipBuffer);
+      if (integrity !== String(moduleEntry.integrity ?? "").trim().toLowerCase()) {
+        errors.push(
+          `catalog.modules[${index}] ${label} pin ${moduleEntry.integrity} does not match downloaded zip ${integrity}`,
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`catalog.modules[${index}] ${label} community pin could not be verified: ${message}`);
+    }
+  }
+
+  return errors;
 }
 
 function checkSchema(value, schema, path, errors) {
@@ -366,75 +482,114 @@ function checkSchema(value, schema, path, errors) {
     errors.push(`${path} must be ${JSON.stringify(schema.const)}`);
   }
 
-  if (schema.type === "object") {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-      errors.push(`${path} must be an object`);
-      return;
-    }
-    const properties = schema.properties || {};
-    for (const key of schema.required || []) {
-      if (!Object.prototype.hasOwnProperty.call(value, key)) {
-        errors.push(`${path}.${key} is required`);
-      }
-    }
-    if (schema.additionalProperties === false) {
-      for (const key of Object.keys(value)) {
-        if (!Object.prototype.hasOwnProperty.call(properties, key)) {
-          errors.push(`${path}.${key} is not allowed`);
-        }
-      }
-    }
-    for (const [key, propertySchema] of Object.entries(properties)) {
-      if (Object.prototype.hasOwnProperty.call(value, key)) {
-        checkSchema(value[key], propertySchema, `${path}.${key}`, errors);
-      }
-    }
-    return;
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+    errors.push(`${path} must be one of ${schema.enum.map((item) => JSON.stringify(item)).join(", ")}`);
   }
 
-  if (schema.type === "array") {
+  const objectKeywords =
+    schema.properties || schema.required || schema.additionalProperties === false;
+  if (schema.type === "object" || (!schema.type && objectKeywords)) {
+    checkObjectSchema(value, schema, path, errors);
+  } else if (schema.type === "array") {
     if (!Array.isArray(value)) {
       errors.push(`${path} must be an array`);
-      return;
-    }
-    if (typeof schema.minItems === "number" && value.length < schema.minItems) {
-      errors.push(`${path} must contain at least ${schema.minItems} item(s)`);
-    }
-    if (schema.items) {
-      value.forEach((item, index) => {
-        checkSchema(item, schema.items, `${path}[${index}]`, errors);
-      });
-    }
-    return;
-  }
-
-  if (schema.type === "string") {
-    if (typeof value !== "string") {
-      errors.push(`${path} must be a string`);
-      return;
-    }
-    if (typeof schema.minLength === "number" && value.length < schema.minLength) {
-      errors.push(`${path} must not be empty`);
-    }
-    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern).test(value)) {
-      errors.push(`${path} does not match ${schema.pattern}`);
-    }
-    if (schema.format === "uri") {
-      try {
-        const url = new URL(value);
-        if (!url.protocol || !url.hostname) {
-          errors.push(`${path} must be a URI`);
-        }
-      } catch {
-        errors.push(`${path} must be a URI`);
+    } else {
+      if (typeof schema.minItems === "number" && value.length < schema.minItems) {
+        errors.push(`${path} must contain at least ${schema.minItems} item(s)`);
+      }
+      if (schema.items) {
+        value.forEach((item, index) => {
+          checkSchema(item, schema.items, `${path}[${index}]`, errors);
+        });
       }
     }
+  } else if (schema.type === "string") {
+    checkStringSchema(value, schema, path, errors);
+  } else if (schema.type === "integer" && !Number.isInteger(value)) {
+    errors.push(`${path} must be an integer`);
+  }
+
+  if (Array.isArray(schema.allOf)) {
+    for (const subschema of schema.allOf) {
+      checkSchema(value, subschema, path, errors);
+    }
+  }
+
+  if (schema.if) {
+    const ifErrors = [];
+    checkSchema(value, schema.if, path, ifErrors);
+    if (ifErrors.length === 0) {
+      if (schema.then) {
+        checkSchema(value, schema.then, path, errors);
+      }
+    } else if (schema.else) {
+      checkSchema(value, schema.else, path, errors);
+    }
+  }
+}
+
+function checkObjectSchema(value, schema, path, errors) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    errors.push(`${path} must be an object`);
     return;
   }
 
-  if (schema.type === "integer" && !Number.isInteger(value)) {
-    errors.push(`${path} must be an integer`);
+  const properties = schema.properties || {};
+  for (const key of schema.required || []) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      errors.push(`${path}.${key} is required`);
+    }
   }
+  if (schema.additionalProperties === false) {
+    for (const key of Object.keys(value)) {
+      if (!Object.prototype.hasOwnProperty.call(properties, key)) {
+        errors.push(`${path}.${key} is not allowed`);
+      }
+    }
+  }
+  for (const [key, propertySchema] of Object.entries(properties)) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      checkSchema(value[key], propertySchema, `${path}.${key}`, errors);
+    }
+  }
+}
+
+function checkStringSchema(value, schema, path, errors) {
+  if (typeof value !== "string") {
+    errors.push(`${path} must be a string`);
+    return;
+  }
+  if (typeof schema.minLength === "number" && value.length < schema.minLength) {
+    errors.push(`${path} must not be empty`);
+  }
+  if (typeof schema.pattern === "string" && !new RegExp(schema.pattern).test(value)) {
+    errors.push(`${path} does not match ${schema.pattern}`);
+  }
+  if (schema.format === "uri") {
+    try {
+      const url = new URL(value);
+      if (!url.protocol || !url.hostname) {
+        errors.push(`${path} must be a URI`);
+      }
+    } catch {
+      errors.push(`${path} must be a URI`);
+    }
+  }
+  if (schema.format === "date" && !isIsoDate(value)) {
+    errors.push(`${path} must be a YYYY-MM-DD date`);
+  }
+}
+
+function isIsoDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return false;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
 export async function fetchPublishedReleases(repo, { token, fetchImpl = fetch } = {}) {
@@ -499,6 +654,18 @@ export async function syncCatalog(catalog, { token, fetchImpl } = {}) {
   const releasesByRepo = new Map();
 
   for (const moduleEntry of catalog.modules) {
+    if (moduleTier(moduleEntry) === "community") {
+      modules.push(moduleEntry);
+      changes.push({
+        id: moduleEntry.id,
+        action: "unchanged",
+        from: moduleEntry.version,
+        to: moduleEntry.version,
+        reason: "community entry is pinned to a reviewed release",
+      });
+      continue;
+    }
+
     const repo = parseGithubRepo(moduleEntry.downloadUrl);
     const repoKey = `${repo.owner}/${repo.repo}`;
     let releases = releasesByRepo.get(repoKey);

@@ -16,10 +16,12 @@ import {
   parseGithubRepo,
   parsePerRadioAssetName,
   isPlaceholderIntegrity,
+  moduleTier,
   selectHighestPerRadioAsset,
   sha256Integrity,
   syncCatalog,
   validateCatalog,
+  verifyCommunityPins,
 } from "./update-catalog.mjs";
 
 globalThis.fetch = async (url) => {
@@ -448,9 +450,245 @@ test("catalog.json must not ship placeholder integrity", () => {
       false,
       `${moduleEntry.id} integrity is a placeholder and must not be merged or served`,
     );
+    assert.equal(moduleEntry.tier, "official", `${moduleEntry.id} must be marked official`);
+    assert.equal(moduleEntry.publisher, undefined);
+    assert.equal(moduleEntry.deprecated, undefined);
+    assert.equal(moduleTier(moduleEntry), "official");
   }
   validateCatalog(catalog, schema);
   parseModuleCatalog(JSON.stringify(catalog));
+});
+
+test("validateCatalog defaults a missing tier to official", () => {
+  const catalog = {
+    schemaVersion: 3,
+    modules: [kenwoodCatalogSeed("kenwood-th-f6", "1.11.0")],
+  };
+  assert.equal(catalog.modules[0].tier, undefined);
+  assert.equal(moduleTier(catalog.modules[0]), "official");
+  validateCatalog(catalog, schema);
+});
+
+test("validateCatalog accepts a community entry and rejects a missing publisher", () => {
+  const entry = communityCatalogSeed();
+  validateCatalog({ schemaVersion: 3, modules: [entry] }, schema);
+
+  const missingPublisher = { ...entry };
+  delete missingPublisher.publisher;
+  assert.throws(
+    () => validateCatalog({ schemaVersion: 3, modules: [missingPublisher] }, schema),
+    /publisher is required/,
+  );
+
+  assert.throws(
+    () =>
+      validateCatalog(
+        {
+          schemaVersion: 3,
+          modules: [{ ...entry, tier: "unverified" }],
+        },
+        schema,
+      ),
+    /tier must be one of/,
+  );
+});
+
+test("validateCatalog requires the GitHub owner to match the tier", () => {
+  const communityOnOrg = {
+    ...communityCatalogSeed(),
+    downloadUrl:
+      "https://github.com/springfield-ham-radio/radio-module-example/releases/download/v1.2.3/radio-module-example-ht-1.2.3.zip",
+  };
+  assert.throws(
+    () => validateCatalog({ schemaVersion: 3, modules: [communityOnOrg] }, schema),
+    /outside springfield-ham-radio/,
+  );
+
+  const officialOutside = {
+    ...kenwoodCatalogSeed("kenwood-th-f6", "1.11.0"),
+    tier: "official",
+    downloadUrl:
+      "https://github.com/example-club/radio-module-kenwood/releases/download/v1.11.0/radio-module-kenwood-th-f6-1.11.0.zip",
+  };
+  assert.throws(
+    () => validateCatalog({ schemaVersion: 3, modules: [officialOutside] }, schema),
+    /from springfield-ham-radio/,
+  );
+});
+
+test("validateCatalog checks deprecated reason and date", () => {
+  const entry = {
+    ...kenwoodCatalogSeed("kenwood-th-f6", "1.11.0"),
+    tier: "official",
+    deprecated: {
+      date: "2026-10-01",
+      reason: "Write fails after firmware 1.2",
+    },
+  };
+  validateCatalog({ schemaVersion: 3, modules: [entry] }, schema);
+
+  assert.throws(
+    () =>
+      validateCatalog(
+        {
+          schemaVersion: 3,
+          modules: [{ ...entry, deprecated: { reason: "Broken write" } }],
+        },
+        schema,
+      ),
+    /deprecated\.date is required/,
+  );
+  assert.throws(
+    () =>
+      validateCatalog(
+        {
+          schemaVersion: 3,
+          modules: [
+            {
+              ...entry,
+              deprecated: { reason: "Broken write", date: "2026-02-31" },
+            },
+          ],
+        },
+        schema,
+      ),
+    /deprecated\.date must be a YYYY-MM-DD date/,
+  );
+  assert.throws(
+    () =>
+      validateCatalog(
+        {
+          schemaVersion: 3,
+          modules: [{ ...entry, deprecated: { reason: "   ", date: "2026-10-01" } }],
+        },
+        schema,
+      ),
+    /deprecated\.reason/,
+  );
+});
+
+test("syncCatalog leaves a community entry pinned and does not contact GitHub", async () => {
+  const entry = communityCatalogSeed();
+  const fetchImpl = async (url) => {
+    throw new Error(`community sync must not fetch ${url}`);
+  };
+  const result = await syncCatalog({ schemaVersion: 3, modules: [entry] }, { fetchImpl });
+  assert.deepEqual(result.catalog.modules[0], entry);
+  assert.equal(result.changes[0].action, "unchanged");
+  assert.equal(result.changes[0].reason, "community entry is pinned to a reviewed release");
+  validateCatalog(result.catalog, schema);
+});
+
+test("applyVerifiedAsset keeps tier and deprecated on an official update", () => {
+  const zip = storedZip([
+    {
+      name: "configs/baofeng-uv5r.json",
+      content: Buffer.from(
+        JSON.stringify({
+          id: { model: "baofeng-uv5r", name: "Baofeng UV-5R" },
+          version: "3.7.1",
+          minApiVersion: "18.0.1",
+        }),
+      ),
+    },
+  ]);
+  const integrity = sha256Integrity(zip);
+  const deprecated = { reason: "Read times out on hardware rev B", date: "2026-09-01" };
+  const current = {
+    id: "baofeng-uv5r",
+    package: "@springfield/radio-module-baofeng-uv5r",
+    manufacturer: "Baofeng",
+    name: "Baofeng UV-5R",
+    tier: "official",
+    version: "3.6.1",
+    config: "configs/baofeng-uv5r.json",
+    minApiVersion: "17.3.0",
+    downloadUrl:
+      "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.6.1/radio-module-baofeng-uv5r-3.6.1.zip",
+    integrity: "sha256:2020c229dc81230f8305464e2eb327e508e21b41ea4651f1a60b9f18672da9ce",
+    deprecated,
+  };
+  const result = applyVerifiedAsset(
+    current,
+    {
+      asset: {
+        name: "radio-module-baofeng-uv5r-3.7.1.zip",
+        browser_download_url:
+          "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v3.7.1/radio-module-baofeng-uv5r-3.7.1.zip",
+        digest: integrity,
+      },
+      release: { tag_name: "v3.7.1", draft: false, prerelease: false },
+      version: "3.7.1",
+    },
+    zip,
+  );
+  assert.equal(result.module.tier, "official");
+  assert.equal(result.module.publisher, undefined);
+  assert.deepEqual(result.module.deprecated, deprecated);
+  assert.equal(result.module.version, "3.7.1");
+  validateCatalog({ schemaVersion: 3, modules: [result.module] }, schema);
+});
+
+test("verifyCommunityPins checks only community zips", async () => {
+  const zip = storedZip([
+    {
+      name: "configs/example-ht.json",
+      content: Buffer.from("{}"),
+    },
+  ]);
+  const integrity = sha256Integrity(zip);
+  const community = {
+    ...communityCatalogSeed(),
+    integrity,
+  };
+  const official = kenwoodCatalogSeed("kenwood-th-f6", "1.11.0");
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    if (String(url) === community.downloadUrl) {
+      return { ok: true, arrayBuffer: async () => bufferSlice(zip) };
+    }
+    throw new Error(`unexpected URL ${url}`);
+  };
+
+  const errors = await verifyCommunityPins(
+    { schemaVersion: 3, modules: [official, community] },
+    fetchImpl,
+  );
+  assert.deepEqual(errors, []);
+  assert.deepEqual(calls, [community.downloadUrl]);
+
+  const mismatch = await verifyCommunityPins(
+    {
+      schemaVersion: 3,
+      modules: [
+        {
+          ...community,
+          integrity: "sha256:2020c229dc81230f8305464e2eb327e508e21b41ea4651f1a60b9f18672da9ce",
+        },
+      ],
+    },
+    fetchImpl,
+  );
+  assert.equal(mismatch.length, 1);
+  assert.match(mismatch[0], /does not match downloaded zip/);
+});
+
+test("formatCatalog writes deprecated with reason before date", () => {
+  const formatted = formatCatalog({
+    schemaVersion: 3,
+    modules: [
+      {
+        integrity: "sha256:2020c229dc81230f8305464e2eb327e508e21b41ea4651f1a60b9f18672da9ce",
+        deprecated: { date: "2026-10-01", reason: "No maintainer response for 90 days" },
+        id: "kenwood-th-f6",
+        tier: "official",
+      },
+    ],
+  });
+  const parsed = JSON.parse(formatted);
+  assert.deepEqual(Object.keys(parsed.modules[0]), ["id", "tier", "integrity", "deprecated"]);
+  assert.deepEqual(Object.keys(parsed.modules[0].deprecated), ["reason", "date"]);
 });
 
 test("dry-run does not write the catalog", async () => {
@@ -547,6 +785,23 @@ test("dry-run does not write the catalog", async () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+function communityCatalogSeed() {
+  return {
+    id: "example-ht",
+    package: "@springfield/radio-module-example-ht",
+    manufacturer: "Example",
+    name: "Example HT",
+    tier: "community",
+    publisher: "Example Amateur Radio",
+    version: "1.2.3",
+    config: "configs/example-ht.json",
+    minApiVersion: "18.0.1",
+    downloadUrl:
+      "https://github.com/example-club/radio-module-example/releases/download/v1.2.3/radio-module-example-ht-1.2.3.zip",
+    integrity: "sha256:2020c229dc81230f8305464e2eb327e508e21b41ea4651f1a60b9f18672da9ce",
+  };
+}
 
 function kenwoodCatalogSeed(modelId, version) {
   return {
