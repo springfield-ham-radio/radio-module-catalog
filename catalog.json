@@ -31,11 +31,11 @@
       "manufacturer": "Kenwood",
       "name": "Kenwood TM-D710A",
       "tier": "official",
-      "version": "1.13.0",
+      "version": "1.15.1",
       "config": "configs/kenwood-tm-d710a.json",
       "minApiVersion": "18.3.0",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.3.0/radio-module-kenwood-tm-d710a-1.13.0.zip",
-      "integrity": "sha256:8abfe72d3b477d7fe853c0888c6dcdacf5e21aec3f5e02b8de48fb97997316b7"
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.11.0/radio-module-kenwood-tm-d710a-1.15.1.zip",
+      "integrity": "sha256:ac876261ad8050f80c3574902e38f72ae771a3a96b4f0187d69014a7498dbb25"
     },
     {
       "id": "baofeng-uv5r",
