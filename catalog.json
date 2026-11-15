@@ -19,11 +19,11 @@
       "manufacturer": "Kenwood",
       "name": "Kenwood TH-D74",
       "tier": "official",
-      "version": "1.19.0",
+      "version": "1.20.0",
       "config": "configs/kenwood-th-d74.json",
       "minApiVersion": "18.3.0",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.10.0/radio-module-kenwood-th-d74-1.19.0.zip",
-      "integrity": "sha256:66e3b5978c639a4aa4d8c1b4ccfa59e2340a2e63632b0a6bc0a35295b347fdad"
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.13.0/radio-module-kenwood-th-d74-1.20.0.zip",
+      "integrity": "sha256:c37b26f08b997caafd67cff177baf6726ea303593cced0f8756a03280a6dac5e"
     },
     {
       "id": "kenwood-tm-d710a",
@@ -41,14 +41,14 @@
       "id": "baofeng-uv5r",
       "package": "@springfield/radio-module-baofeng-uv5r",
       "manufacturer": "Baofeng",
-      "name": "Baofeng UV-5R",
+      "name": "Baofeng UV-5R / UV-5R Plus",
       "description": "Baofeng UV-5R series (UV-5R and UV-5RE Plus share one config)",
       "tier": "official",
-      "version": "3.7.0",
+      "version": "3.8.0",
       "config": "configs/baofeng-uv5r.json",
       "minApiVersion": "18.0.1",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v4.0.0/radio-module-baofeng-uv5r-3.7.0.zip",
-      "integrity": "sha256:1481e2eb3a6f569af136533036b32d48bbbb14023a03761c859c0d42e2b674a5"
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-baofeng/releases/download/v4.2.0/radio-module-baofeng-uv5r-3.8.0.zip",
+      "integrity": "sha256:6937b4f1d3a84c9c73e0254d487c604a982c4d88a4aab7c01fc38b4c199eb14a"
     }
   ]
 }
