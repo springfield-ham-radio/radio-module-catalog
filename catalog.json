@@ -19,11 +19,11 @@
       "manufacturer": "Kenwood",
       "name": "Kenwood TH-D74",
       "tier": "official",
-      "version": "1.29.0",
+      "version": "1.32.0",
       "config": "configs/kenwood-th-d74.json",
-      "minApiVersion": "18.3.0",
-      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.22.0/radio-module-kenwood-th-d74-1.29.0.zip",
-      "integrity": "sha256:62536971a12481d8367d2e7db24a799630cdacd26d9712f6d83c6d27af2ab37c"
+      "minApiVersion": "18.6.0",
+      "downloadUrl": "https://github.com/springfield-ham-radio/radio-module-kenwood/releases/download/v2.25.0/radio-module-kenwood-th-d74-1.32.0.zip",
+      "integrity": "sha256:bf30882543e4d7c13b3a5ce748f54d9375bea9c394ba1e86e6f601b333edcde4"
     },
     {
       "id": "kenwood-tm-d710a",
